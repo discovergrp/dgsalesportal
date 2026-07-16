@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Discover Group — Sales Portal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- ======================= LOGIN ======================= -->
+<div class="login-screen" id="loginScreen">
+  <div class="login-card">
+    <div class="login-logo">
+      <svg viewBox="0 0 24 24" fill="none"><path d="M4 3h8a9 9 0 0 1 0 18H4V3z" fill="#fff"/><path d="M4 3h8a9 9 0 0 1 0 18H4" stroke="#0b1f42" stroke-width="0"/><path d="M8 7h4a5 5 0 0 1 0 10H8V7z" fill="#12294f"/></svg>
+    </div>
+    <div class="eyebrow">Secure Employee Access</div>
+    <h1>Discover Group Sales Portal</h1>
+    <p class="login-sub">Select your employee workspace and enter your assigned password.</p>
+
+    <div class="field">
+      <label for="emailInput">Work email</label>
+      <input type="email" id="emailInput" placeholder="you@discovergroup.com">
+    </div>
+    <div class="field">
+      <label for="pwInput">Password</label>
+      <div class="pw-row">
+        <input type="password" id="pwInput" placeholder="Enter password">
+        <button class="btn-show" id="pwToggle" type="button">Show</button>
+      </div>
+    </div>
+    <button class="btn-primary" id="loginBtn" type="button">Access Workspace</button>
+    <div class="login-error" id="loginError">Couldn't log you in — check your email and password.</div>
+    <p class="login-foot">Authorized Discover Group employees only.</p>
+  </div>
+</div>
+
+<!-- ======================= APP SHELL ======================= -->
+<div class="app" id="app">
+
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M8 7h4a5 5 0 0 1 0 10H8V7z" fill="#fff"/></svg>
+      </div>
+      <div>
+        <div class="brand-name">DISCOVER GROUP</div>
+        <div class="brand-sub">Sales Command Center</div>
+      </div>
+    </div>
+
+    <div class="workspace-box">
+      <div class="workspace-label">Employee workspace</div>
+      <div class="workspace-name" id="sidebarName">Princess Aila Macamay</div>
+      <span class="role-pill">Sales Agent</span>
+    </div>
+
+    <nav class="nav" id="nav">
+      <button data-view="team" class="active">Team Dashboard</button>
+      <button data-view="client">Client Profile</button>
+      <button data-view="folders">Digital Travel Folders</button>
+      <button data-view="leads">Leads Tracker</button>
+      <button data-view="agent">Agent Dashboard</button>
+      <button data-view="scorecard">Daily Scorecard</button>
+      <button class="logout" id="logoutBtn">Log Out</button>
+    </nav>
+
+    <div class="sidebar-foot">
+      <span class="sync-dot"></span>
+      <div class="sync-text">
+        <strong>HubSpot Sync</strong>
+        <span>Demo mode</span>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main">
+
+    <!-- ---------- TEAM DASHBOARD ---------- -->
+    <section class="view active" id="view-team">
+      <div class="view-head">
+        <div>
+          <div class="eyebrow-line">Discover Group Sales OS</div>
+          <h1>Team Dashboard</h1>
+          <p>Live view of team performance, pipeline, and admin flags.</p>
+        </div>
+        <div class="date-pill" id="todayPill">Thursday, July 16, 2026</div>
+      </div>
+
+      <div class="stat-grid">
+        <div class="stat-card"><div class="label">Your score</div><div class="value">0</div><div class="hint">out of 100 today</div></div>
+        <div class="stat-card"><div class="label">Your commission</div><div class="value">₱0</div><div class="hint">accrued this period</div></div>
+        <div class="stat-card"><div class="label">Team net sales</div><div class="value">₱0</div><div class="hint">across all agents today</div></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title-row">
+          <div>
+            <h2>Daily Sales Ranking</h2>
+            <p>Net sales collection, closed pax, bonus, and commission</p>
+          </div>
+          <div class="mini-field">
+            <label for="rankDate">Ranking date</label>
+            <input type="date" id="rankDate" value="2026-07-16">
+          </div>
+        </div>
+
+        <div id="rankingList"></div>
+      </div>
+
+      <div class="split-row" style="margin-top:20px;">
+        <div class="card">
+          <div class="funnel-title-row">
+            <h2>Team Sales Funnel</h2>
+            <a href="#" onclick="return false;">All agents</a>
+          </div>
+          <div class="funnel-grid" id="funnelGrid"></div>
+        </div>
+
+        <div class="card alert-card">
+          <h3>Urgent Admin Attention</h3>
+          <p class="sub">Leads requiring intervention</p>
+          <ul><li>No urgent alerts.</li></ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- CLIENT PROFILE ---------- -->
+    <section class="view" id="view-client">
+      <div class="view-head">
+        <div>
+          <div class="eyebrow-line">Discover Group Sales OS</div>
+          <h1>Client Profile</h1>
+          <p>One record per traveler — sales journey, closing strategy, and context.</p>
+        </div>
+        <div class="date-pill">Thursday, July 16, 2026</div>
+      </div>
+
+      <div class="card">
+        <div class="section-title">Travel profile</div>
+        <div class="form-grid">
+          <div class="form-field"><label>Package / Destination</label><input type="text" placeholder="e.g. Route G Deluxe"></div>
+          <div class="form-field"><label>Preferred travel date</label><input type="date"></div>
+          <div class="form-field"><label>Number of travelers</label><input type="number" value="1" min="1"></div>
+          <div class="form-field">
+            <label>Visa status</label>
+            <select><option>Not yet applied</option><option>In progress</option><option>Approved</option><option>Not required</option></select>
+          </div>
+          <div class="form-field">
+            <label>Lead source</label>
+            <select><option>Facebook</option><option>Instagram</option><option>Referral</option><option>Walk-in</option><option>Website</option></select>
+          </div>
+          <div class="form-field"><label>Estimated deal value</label><input type="number" value="0"></div>
+        </div>
+
+        <div class="section-title">Sales journey &amp; closing strategy</div>
+        <div class="form-grid two">
+          <div class="form-field">
+            <label>Current client journey stage</label>
+            <select>
+              <option>New Inquiry</option><option>Discovery &amp; Qualification</option>
+              <option>Solution Presented</option><option>Decision in Progress</option>
+              <option>Strategic Nurturing</option><option>Reservation / Payment Processing</option>
+              <option>Successfully Booked</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label>Lead temperature</label>
+            <select>
+              <option>Hot – likely to close within 7 days</option>
+              <option>Warm – engaged, needs nurturing</option>
+              <option>Cold – early stage, low urgency</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label>Decision status</label>
+            <select><option>Ready to reserve</option><option>Comparing options</option><option>Awaiting approval</option><option>On hold</option></select>
+          </div>
+          <div class="form-field"><label>Next follow-up</label><input type="datetime-local"></div>
+        </div>
+        <div class="form-field" style="margin-top:18px;">
+          <label>Client concern / buying signal</label>
+          <textarea placeholder="What matters most to the client and what is preventing the booking?"></textarea>
+        </div>
+        <div class="form-field" style="margin-top:18px;">
+          <label>Next closing strategy</label>
+          <textarea placeholder="Specific message angle, call, proof, offer, alternative, or decision step"></textarea>
+        </div>
+        <div class="form-field" style="margin-top:18px;">
+          <label>Remarks</label>
+          <textarea placeholder="Important context, responses, objections, and commitments"></textarea>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- DIGITAL TRAVEL FOLDERS ---------- -->
+    <section class="view" id="view-folders">
+      <div class="banner">
+        <div>
+          <div class="eyebrow-line">One Client • One Record • Every Department</div>
+          <h2>Digital Travel Folders</h2>
+          <p>Each traveler record connects sales, finance, visa, booking, and customer service without duplicate encoding.</p>
+        </div>
+        <div class="banner-stat"><div class="value">0<span> folders</span></div><div class="label">Unified client records</div></div>
+      </div>
+
+      <div class="stat-grid">
+        <div class="stat-card"><div class="label">Active Sales Journeys</div><div class="value">0</div><div class="hint">Not yet booked or lost</div></div>
+        <div class="stat-card"><div class="label">Booked Clients</div><div class="value">0</div><div class="hint">Ready for department handoff</div></div>
+        <div class="stat-card"><div class="label">With Payments</div><div class="value">0</div><div class="hint">Finance records attached</div></div>
+        <div class="stat-card"><div class="label">Visa Service</div><div class="value">0</div><div class="hint">Visa assistance availed</div></div>
+      </div>
+
+      <div class="card">
+        <h2 style="margin:0 0 2px; font-size:17px; color:var(--navy-900);">Unified Client Registry</h2>
+        <p style="margin:0; font-size:13px; color:var(--ink-soft);">Shared source of truth for every authorized department</p>
+        <div class="registry-empty">No matching client records yet.</div>
+      </div>
+    </section>
+
+    <!-- ---------- LEADS TRACKER ---------- -->
+    <section class="view" id="view-leads">
+      <div class="view-head">
+        <div>
+          <div class="eyebrow-line">Discover Group Sales OS</div>
+          <h1>Leads Tracker</h1>
+          <p>Create and maintain your own client profiles</p>
+        </div>
+        <div class="date-pill">Thursday, July 16, 2026</div>
+      </div>
+
+      <div class="card">
+        <div class="filter-row">
+          <div class="pill-group" id="leadPills">
+            <button class="pill active" data-range="today">Today</button>
+            <button class="pill" data-range="yesterday">Yesterday</button>
+            <button class="pill" data-range="y2">Yesterday + Today</button>
+            <button class="pill" data-range="all">All</button>
+            <button class="pill" data-range="custom">Custom</button>
+          </div>
+          <div class="date-range">
+            <div class="mini-field"><label>From</label><input type="date"></div>
+            <div class="mini-field"><label>To</label><input type="date"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title-row">
+          <div>
+            <h2 id="leadsOwner">Princess Aila Macamay's Leads Tracker</h2>
+            <p>Personal records only</p>
+          </div>
+          <span style="font-size:13px; color:var(--ink-faint); font-weight:600;">0 records</span>
+        </div>
+        <div class="registry-empty">No leads found for this date range.</div>
+      </div>
+    </section>
+
+    <!-- ---------- AGENT DASHBOARD ---------- -->
+    <section class="view" id="view-agent">
+      <div class="view-head">
+        <div>
+          <div class="eyebrow-line">Discover Group Sales OS</div>
+          <h1>Agent Dashboard</h1>
+          <p id="agentSub">Individual performance for Princess Aila Macamay</p>
+        </div>
+        <div class="date-pill">Thursday, July 16, 2026</div>
+      </div>
+
+      <div class="stat-grid">
+        <div class="stat-card"><div class="label">Net sales (today)</div><div class="value">₱0</div><div class="hint">Closed and confirmed</div></div>
+        <div class="stat-card"><div class="label">Pax closed</div><div class="value">0</div><div class="hint">Travelers booked today</div></div>
+        <div class="stat-card"><div class="label">Daily bonus</div><div class="value">₱0</div><div class="hint">Performance-based</div></div>
+        <div class="stat-card"><div class="label">Commission</div><div class="value">₱0</div><div class="hint">This period</div></div>
+      </div>
+
+      <div class="card">
+        <div class="funnel-title-row">
+          <h2>My Sales Funnel</h2>
+        </div>
+        <div class="funnel-grid" id="funnelGridAgent"></div>
+      </div>
+    </section>
+
+    <!-- ---------- DAILY SCORECARD ---------- -->
+    <section class="view" id="view-scorecard">
+      <div class="view-head">
+        <div>
+          <div class="eyebrow-line">Discover Group Sales OS</div>
+          <h1>Daily Scorecard</h1>
+          <p id="scorecardSub">Daily scorecard for Princess Aila Macamay</p>
+        </div>
+        <div class="date-pill">Thursday, July 16, 2026</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title-row" style="align-items:flex-start;">
+          <div>
+            <div class="eyebrow-line">Daily Quality Audit</div>
+            <h2 style="font-size:20px; margin:6px 0 4px;">Sales Performance Scorecard</h2>
+            <p style="max-width:520px;">One scorecard per agent, per day, based on actual conversations and tracker records.</p>
+          </div>
+          <div class="score-badge"><span class="num" id="totalScore">0</span><span class="of">/ 100</span></div>
+        </div>
+
+        <div class="form-grid" style="margin-top:20px;">
+          <div class="form-field">
+            <label>Consultant</label>
+            <select id="consultantSelect">
+              <option>Princess Aila Macamay</option><option>Genesis Quilang</option>
+              <option>Leslie Castillo</option><option>Ai-Sel</option>
+            </select>
+          </div>
+          <div class="form-field"><label>Evaluation date</label><input type="date" value="2026-07-16"></div>
+          <div class="form-field"><label>Evaluator / Team Lead</label><input type="text" placeholder="Evaluator name"></div>
+        </div>
+
+        <div id="criteriaList" style="margin-top:8px;"></div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
