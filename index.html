@@ -133,33 +133,56 @@
         <div>
           <div class="eyebrow-line">Discover Group Sales OS</div>
           <h1>Client Profile</h1>
-          <p>One record per traveler — sales journey, closing strategy, and context.</p>
+          <p>Create, assign, and maintain complete client profiles</p>
         </div>
         <div class="date-pill">Thursday, July 16, 2026</div>
       </div>
 
+      <div class="banner" style="margin-bottom:20px;">
+        <div>
+          <div class="eyebrow-line">Client 360° Profile</div>
+          <h2>Client Profile &amp; Booking Record</h2>
+          <p>Capture the complete sales journey, booking documents, payments, preferences, services, and next strategy in one secure profile.</p>
+        </div>
+        <div class="banner-stat" style="padding:16px 22px;">
+          <div style="font-weight:700; font-size:15px;">HubSpot Contact + Deal + Files</div>
+        </div>
+      </div>
+
       <div class="card">
+        <div class="section-title">Client information</div>
+        <div class="form-grid">
+          <div class="form-field"><label>Full name</label><input type="text" id="cp_fullname" placeholder="Client full name"></div>
+          <div class="form-field"><label>Email</label><input type="email" id="cp_email" placeholder="client@email.com"></div>
+          <div class="form-field"><label>Mobile number</label><input type="tel" id="cp_mobile" placeholder="09XX XXX XXXX"></div>
+        </div>
+        <div class="form-grid" style="margin-top:18px;">
+          <div class="form-field"><label>Date of inquiry</label><input type="date" id="cp_inquiry_date"></div>
+          <div class="form-field"><label>Time of inquiry</label><input type="time" id="cp_inquiry_time"></div>
+          <div class="form-field"><label>Assigned consultant</label><select id="cp_consultant"></select></div>
+        </div>
+
         <div class="section-title">Travel profile</div>
         <div class="form-grid">
-          <div class="form-field"><label>Package / Destination</label><input type="text" placeholder="e.g. Route G Deluxe"></div>
-          <div class="form-field"><label>Preferred travel date</label><input type="date"></div>
-          <div class="form-field"><label>Number of travelers</label><input type="number" value="1" min="1"></div>
+          <div class="form-field"><label>Package / Destination</label><input type="text" id="cp_destination" placeholder="e.g. Route G Deluxe"></div>
+          <div class="form-field"><label>Preferred travel date</label><input type="date" id="cp_travel_date"></div>
+          <div class="form-field"><label>Number of travelers</label><input type="number" id="cp_travelers" value="1" min="1"></div>
           <div class="form-field">
             <label>Visa status</label>
-            <select><option>Not yet applied</option><option>In progress</option><option>Approved</option><option>Not required</option></select>
+            <select id="cp_visa_status"><option>Not yet applied</option><option>In progress</option><option>Approved</option><option>Not required</option></select>
           </div>
           <div class="form-field">
             <label>Lead source</label>
-            <select><option>Facebook</option><option>Instagram</option><option>Referral</option><option>Walk-in</option><option>Website</option></select>
+            <select id="cp_lead_source"><option>Facebook</option><option>Instagram</option><option>Referral</option><option>Walk-in</option><option>Website</option></select>
           </div>
-          <div class="form-field"><label>Estimated deal value</label><input type="number" value="0"></div>
+          <div class="form-field"><label>Estimated deal value</label><input type="number" id="cp_deal_value" value="0"></div>
         </div>
 
         <div class="section-title">Sales journey &amp; closing strategy</div>
         <div class="form-grid two">
           <div class="form-field">
             <label>Current client journey stage</label>
-            <select>
+            <select id="cp_stage">
               <option>New Inquiry</option><option>Discovery &amp; Qualification</option>
               <option>Solution Presented</option><option>Decision in Progress</option>
               <option>Strategic Nurturing</option><option>Reservation / Payment Processing</option>
@@ -168,7 +191,7 @@
           </div>
           <div class="form-field">
             <label>Lead temperature</label>
-            <select>
+            <select id="cp_temperature">
               <option>Hot – likely to close within 7 days</option>
               <option>Warm – engaged, needs nurturing</option>
               <option>Cold – early stage, low urgency</option>
@@ -176,21 +199,81 @@
           </div>
           <div class="form-field">
             <label>Decision status</label>
-            <select><option>Ready to reserve</option><option>Comparing options</option><option>Awaiting approval</option><option>On hold</option></select>
+            <select id="cp_decision"><option>Ready to reserve</option><option>Comparing options</option><option>Awaiting approval</option><option>On hold</option></select>
           </div>
-          <div class="form-field"><label>Next follow-up</label><input type="datetime-local"></div>
+          <div class="form-field"><label>Next follow-up</label><input type="datetime-local" id="cp_followup"></div>
         </div>
         <div class="form-field" style="margin-top:18px;">
           <label>Client concern / buying signal</label>
-          <textarea placeholder="What matters most to the client and what is preventing the booking?"></textarea>
+          <textarea id="cp_concern" placeholder="What matters most to the client and what is preventing the booking?"></textarea>
         </div>
         <div class="form-field" style="margin-top:18px;">
           <label>Next closing strategy</label>
-          <textarea placeholder="Specific message angle, call, proof, offer, alternative, or decision step"></textarea>
+          <textarea id="cp_strategy" placeholder="Specific message angle, call, proof, offer, alternative, or decision step"></textarea>
         </div>
         <div class="form-field" style="margin-top:18px;">
           <label>Remarks</label>
-          <textarea placeholder="Important context, responses, objections, and commitments"></textarea>
+          <textarea id="cp_remarks" placeholder="Important context, responses, objections, and commitments"></textarea>
+        </div>
+
+        <div class="section-title">Booking confirmation &amp; payment documents</div>
+        <div class="form-grid two">
+          <div class="form-field">
+            <label>Booking confirmation / registration form</label>
+            <input type="file" disabled>
+          </div>
+          <div class="form-field"><label>Booking reference number</label><input type="text" id="cp_booking_ref" placeholder="e.g. DG-2026-0001"></div>
+        </div>
+        <p style="font-size:13px; color:var(--ink-soft); margin-top:10px;">Attach the signed booking confirmation once the client registers. Payment records below support up to fifteen installments.</p>
+        <p style="font-size:12.5px; color:var(--ink-faint); margin-top:2px;">File uploads aren't wired up yet — that's a follow-up step (needs Supabase Storage). Payment dates/amounts below do save.</p>
+
+        <div id="paymentRows" style="margin-top:12px;"></div>
+
+        <div class="section-title">Visa service, discounts &amp; client considerations</div>
+        <div class="form-grid">
+          <div class="form-field">
+            <label>Visa service availed?</label>
+            <select id="cp_visa_availed"><option>No</option><option>Yes</option></select>
+          </div>
+          <div class="form-field"><label>Visa service fee</label><input type="number" id="cp_visa_fee" value="0"></div>
+          <div class="form-field"><label>Visa service discount</label><input type="number" id="cp_visa_discount" value="0"></div>
+        </div>
+        <div class="form-field" style="margin-top:18px;">
+          <label>Applied package discounts</label>
+          <textarea id="cp_discounts" placeholder="Discount type, amount, approval, and reason"></textarea>
+        </div>
+        <div class="form-field" style="margin-top:18px;">
+          <label>Special freebies / commercial considerations</label>
+          <textarea id="cp_freebies" placeholder="Approved freebies, upgrades, waived fees, gifts, or special deal terms"></textarea>
+        </div>
+        <div class="form-field" style="margin-top:18px;">
+          <label>Special client requests</label>
+          <textarea id="cp_requests" placeholder="Rooming, transfers, celebrations, accessibility, documentation, or other requests"></textarea>
+        </div>
+
+        <div class="section-title">Traveler preferences &amp; optional services</div>
+        <div class="form-grid two">
+          <div class="form-field"><label>Preferred airline</label><input type="text" id="cp_airline" placeholder="Airline or alliance preference"></div>
+          <div class="form-field"><label>Seat preference</label><input type="text" id="cp_seat" placeholder="Aisle, window, front cabin, adjacent seats, etc."></div>
+          <div class="form-field"><label>Meal preference / food allergy</label><input type="text" id="cp_meal" placeholder="Dietary requirement, allergy, or special meal"></div>
+          <div class="form-field"><label>Room preference</label><input type="text" id="cp_room" placeholder="Twin, double, connecting room, floor preference, etc."></div>
+        </div>
+        <div class="form-field" style="margin-top:18px;">
+          <label>Traveler preferences</label>
+          <textarea id="cp_preferences" placeholder="Travel pace, interests, mobility needs, shopping, sightseeing, comfort, and other preferences"></textarea>
+        </div>
+        <div class="form-field" style="margin-top:18px;">
+          <label>Optional tours selected</label>
+          <textarea id="cp_tours" placeholder="Tour name, date, number of guests, rate, and status"></textarea>
+        </div>
+        <div class="form-field" style="margin-top:18px;">
+          <label>Optional services selected</label>
+          <textarea id="cp_services" placeholder="Airport assistance, transfers, insurance, upgrades, extensions, add-ons, and other services"></textarea>
+        </div>
+
+        <div style="display:flex; gap:12px; margin-top:26px;">
+          <button class="btn-primary" id="cp_save_draft" type="button" style="width:auto; padding:11px 22px; background:#eef1f6; color:var(--navy-900); box-shadow:none;">Save draft</button>
+          <button class="btn-primary" id="cp_save_sync" type="button" style="width:auto; padding:11px 22px;">Save Client Profile &amp; Sync to HubSpot</button>
         </div>
       </div>
     </section>

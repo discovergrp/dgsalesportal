@@ -141,10 +141,12 @@ async function loadRanking() {
     list.appendChild(row);
   });
 
-  // Consultant dropdown on the scorecard view — populate from real employees
+  // Consultant dropdowns — populate from real employees (scorecard + client profile)
+  const optionsHtml = profiles.map(p => `<option value="${p.id}">${p.full_name}</option>`).join("");
   const sel = document.getElementById("consultantSelect");
-  sel.innerHTML = profiles.map(p => `<option value="${p.id}">${p.full_name}</option>`).join("");
-  if (currentProfile) sel.value = currentProfile.id;
+  if (sel) { sel.innerHTML = optionsHtml; if (currentProfile) sel.value = currentProfile.id; }
+  const cpSel = document.getElementById("cp_consultant");
+  if (cpSel) { cpSel.innerHTML = optionsHtml; if (currentProfile) cpSel.value = currentProfile.id; }
 }
 
 // ---------- Leads Tracker (real data) ----------
@@ -168,41 +170,96 @@ async function loadLeads() {
   empty.textContent = leads.map(l => `${l.package_destination || "Untitled lead"} — ${l.journey_stage}`).join(" · ");
 }
 
-// Save the Client Profile form as a new lead
-const clientCard = document.querySelector("#view-client .card");
-if (clientCard) {
-  const saveBtn = document.createElement("button");
-  saveBtn.textContent = "Save client profile";
-  saveBtn.className = "btn-primary";
-  saveBtn.style.marginTop = "22px";
-  saveBtn.style.width = "auto";
-  saveBtn.style.padding = "11px 22px";
-  saveBtn.addEventListener("click", async () => {
-    if (!currentProfile) return;
-    const fields = clientCard.querySelectorAll("input, select, textarea");
-    const [dest, travelDate, travelers, visa, source, deal, stage, temp, decision, followup, concern, strategy, remarks] = fields;
-    saveBtn.textContent = "Saving…";
-    const { error } = await supabaseClient.from("leads").insert({
-      agent_id: currentProfile.id,
-      package_destination: dest.value,
-      travel_date: travelDate.value || null,
-      travelers: Number(travelers.value) || 1,
-      visa_status: visa.value,
-      lead_source: source.value,
-      deal_value: Number(deal.value) || 0,
-      journey_stage: stage.value,
-      lead_temperature: temp.value,
-      decision_status: decision.value,
-      next_followup: followup.value || null,
-      concern: concern.value,
-      closing_strategy: strategy.value,
-      remarks: remarks.value,
-    });
-    saveBtn.textContent = error ? "Error — try again" : "Saved ✓";
-    if (!error) { await loadLeads(); setTimeout(() => (saveBtn.textContent = "Save client profile"), 1500); }
-  });
-  clientCard.appendChild(saveBtn);
+// ---------- Client Profile: payment installment rows (1–15) ----------
+function renderPaymentRows() {
+  const wrap = document.getElementById("paymentRows");
+  if (!wrap) return;
+  wrap.innerHTML = "";
+  for (let i = 1; i <= 15; i++) {
+    const row = document.createElement("div");
+    row.className = "rank-row";
+    row.style.alignItems = "flex-end";
+    row.innerHTML = `
+      <div class="rank-badge">${String(i).padStart(2, "0")}</div>
+      <div class="form-field" style="flex:1;"><label>Payment date</label><input type="date" class="pay-date" data-idx="${i}"></div>
+      <div class="form-field" style="flex:1;"><label>Amount</label><input type="number" class="pay-amount" data-idx="${i}" value="0"></div>
+      <div class="form-field" style="flex:1;">
+        <label>Payment method</label>
+        <select class="pay-method" data-idx="${i}">
+          <option value="">Select</option><option>Bank transfer</option><option>Credit card</option><option>Cash</option><option>GCash</option>
+        </select>
+      </div>
+      <div class="form-field" style="flex:1;"><label>Receipt / deposit slip</label><input type="file" disabled></div>`;
+    wrap.appendChild(row);
+  }
 }
+renderPaymentRows();
+
+function collectPayments() {
+  const payments = [];
+  document.querySelectorAll(".pay-date").forEach(dateEl => {
+    const idx = dateEl.dataset.idx;
+    const amountEl = document.querySelector(`.pay-amount[data-idx="${idx}"]`);
+    const methodEl = document.querySelector(`.pay-method[data-idx="${idx}"]`);
+    if (dateEl.value || Number(amountEl.value) > 0) {
+      payments.push({ date: dateEl.value || null, amount: Number(amountEl.value) || 0, method: methodEl.value || null });
+    }
+  });
+  return payments;
+}
+
+// Save the full Client Profile form as a new lead
+function buildClientProfilePayload() {
+  const v = id => document.getElementById(id)?.value || null;
+  return {
+    agent_id: currentProfile.id,
+    client_full_name: v("cp_fullname"),
+    client_email: v("cp_email"),
+    client_mobile: v("cp_mobile"),
+    inquiry_date: v("cp_inquiry_date"),
+    inquiry_time: v("cp_inquiry_time"),
+    assigned_consultant: v("cp_consultant"),
+    package_destination: v("cp_destination"),
+    travel_date: v("cp_travel_date"),
+    travelers: Number(v("cp_travelers")) || 1,
+    visa_status: v("cp_visa_status"),
+    lead_source: v("cp_lead_source"),
+    deal_value: Number(v("cp_deal_value")) || 0,
+    journey_stage: v("cp_stage"),
+    lead_temperature: v("cp_temperature"),
+    decision_status: v("cp_decision"),
+    next_followup: v("cp_followup"),
+    concern: v("cp_concern"),
+    closing_strategy: v("cp_strategy"),
+    remarks: v("cp_remarks"),
+    booking_reference: v("cp_booking_ref"),
+    payments: collectPayments(),
+    visa_service_availed: v("cp_visa_availed"),
+    visa_service_fee: Number(v("cp_visa_fee")) || 0,
+    visa_service_discount: Number(v("cp_visa_discount")) || 0,
+    applied_discounts: v("cp_discounts"),
+    special_freebies: v("cp_freebies"),
+    special_requests: v("cp_requests"),
+    preferred_airline: v("cp_airline"),
+    seat_preference: v("cp_seat"),
+    meal_preference: v("cp_meal"),
+    room_preference: v("cp_room"),
+    traveler_preferences: v("cp_preferences"),
+    optional_tours: v("cp_tours"),
+    optional_services: v("cp_services"),
+  };
+}
+
+async function saveClientProfile(btn, label) {
+  if (!currentProfile) return;
+  btn.textContent = "Saving…";
+  const { error } = await supabaseClient.from("leads").insert(buildClientProfilePayload());
+  btn.textContent = error ? "Error — try again" : "Saved ✓";
+  if (!error) { await loadLeads(); setTimeout(() => (btn.textContent = label), 1500); }
+}
+
+document.getElementById("cp_save_draft")?.addEventListener("click", (e) => saveClientProfile(e.target, "Save draft"));
+document.getElementById("cp_save_sync")?.addEventListener("click", (e) => saveClientProfile(e.target, "Save Client Profile & Sync to HubSpot"));
 
 // ---------- Funnel ----------
 function renderFunnel(targetId) {
