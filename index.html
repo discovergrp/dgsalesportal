@@ -63,7 +63,16 @@
       <button data-view="folders">Digital Travel Folders</button>
       <button data-view="leads">Leads Tracker</button>
       <button data-view="agent">Agent Dashboard</button>
+      <button data-view="approvals">Approvals</button>
       <button data-view="scorecard">Daily Scorecard</button>
+      <button data-view="voucher">Digital Voucher</button>
+
+      <div class="nav-section-label">Compliance</div>
+      <button data-view="compliance">Compliance Record</button>
+
+      <div class="nav-section-label">Resources</div>
+      <button data-view="resources">Resources</button>
+
       <button class="logout" id="logoutBtn">Log Out</button>
     </nav>
 
@@ -84,15 +93,48 @@
         <div>
           <div class="eyebrow-line">Discover Group Sales OS</div>
           <h1>Team Dashboard</h1>
-          <p>Live view of team performance, pipeline, and admin flags.</p>
+          <p>Sales administration overview of all agents</p>
         </div>
         <div class="date-pill" id="todayPill">Thursday, July 16, 2026</div>
       </div>
 
-      <div class="stat-grid">
-        <div class="stat-card"><div class="label">Your score</div><div class="value">0</div><div class="hint">out of 100 today</div></div>
-        <div class="stat-card"><div class="label">Your commission</div><div class="value">₱0</div><div class="hint">accrued this period</div></div>
-        <div class="stat-card"><div class="label">Team net sales</div><div class="value">₱0</div><div class="hint">across all agents today</div></div>
+      <div class="card">
+        <div class="filter-row">
+          <div class="pill-group" id="teamPeriodPills">
+            <button class="pill active" data-range="today">Today</button>
+            <button class="pill" data-range="yesterday">Yesterday</button>
+            <button class="pill" data-range="y2">Yesterday + Today</button>
+            <button class="pill" data-range="custom">Custom</button>
+          </div>
+          <div class="date-range">
+            <div class="mini-field"><label>From</label><input type="date"></div>
+            <div class="mini-field"><label>To</label><input type="date"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="banner" style="margin-top:20px;">
+        <div>
+          <div class="eyebrow-line">Sales Admin Control Center</div>
+          <h2>One complete view of the entire sales team.</h2>
+          <p>Monitor all leads, collections, closed pax, follow-up obligations, scorecards, and funnel movement.</p>
+        </div>
+        <div class="banner-stat"><div class="value">0<span> /100</span></div><div class="label">Team average score</div></div>
+      </div>
+
+      <div class="stat-grid" style="margin-top:20px;">
+        <div class="stat-card"><div class="label">Total Leads</div><div class="value">0</div><div class="hint">All agents, selected period</div></div>
+        <div class="stat-card"><div class="label">Open Follow-ups</div><div class="value">0</div><div class="hint">Active opportunities</div></div>
+        <div class="stat-card"><div class="label">Pax Closed</div><div class="value">0</div><div class="hint">All agents</div></div>
+        <div class="stat-card"><div class="label">Net Sales Collection</div><div class="value">₱0</div><div class="hint">Selected period</div></div>
+        <div class="stat-card"><div class="label">Unlocked Commission</div><div class="value">₱0</div><div class="hint">Current month</div></div>
+        <div class="stat-card"><div class="label">Daily Bonuses</div><div class="value">₱0</div><div class="hint">Selected period</div></div>
+      </div>
+
+      <div class="card">
+        <h2 style="margin:0 0 2px; font-size:18px; color:var(--navy-900);">Agent Performance Overview</h2>
+        <p style="margin:0 0 16px; font-size:13px; color:var(--ink-soft);">Team ranking and operating health</p>
+        <div id="agentPerfGrid" style="display:grid; grid-template-columns:repeat(2,1fr); gap:16px;"></div>
       </div>
 
       <div class="card">
@@ -122,7 +164,7 @@
         <div class="card alert-card">
           <h3>Urgent Admin Attention</h3>
           <p class="sub">Leads requiring intervention</p>
-          <ul><li>No urgent alerts.</li></ul>
+          <ul id="urgentAlertsList"><li>No urgent alerts.</li></ul>
         </div>
       </div>
     </section>
@@ -160,6 +202,14 @@
           <div class="form-field"><label>Date of inquiry</label><input type="date" id="cp_inquiry_date"></div>
           <div class="form-field"><label>Time of inquiry</label><input type="time" id="cp_inquiry_time"></div>
           <div class="form-field"><label>Assigned consultant</label><select id="cp_consultant"></select></div>
+        </div>
+        <div class="form-grid" style="margin-top:18px;">
+          <div class="form-field"><label>Emergency contact name</label><input type="text" id="cp_emergency_name" placeholder="Name of emergency contact"></div>
+          <div class="form-field"><label>Emergency contact number</label><input type="tel" id="cp_emergency_phone" placeholder="09XX XXX XXXX"></div>
+        </div>
+        <div class="form-field" style="margin-top:18px;">
+          <label>Physical address</label>
+          <textarea id="cp_address" placeholder="Street, barangay, city, province, ZIP code"></textarea>
         </div>
 
         <div class="section-title">Travel profile</div>
@@ -220,12 +270,11 @@
         <div class="form-grid two">
           <div class="form-field">
             <label>Booking confirmation / registration form</label>
-            <input type="file" disabled>
+            <input type="file" id="cp_booking_file">
           </div>
           <div class="form-field"><label>Booking reference number</label><input type="text" id="cp_booking_ref" placeholder="e.g. DG-2026-0001"></div>
         </div>
         <p style="font-size:13px; color:var(--ink-soft); margin-top:10px;">Attach the signed booking confirmation once the client registers. Payment records below support up to fifteen installments.</p>
-        <p style="font-size:12.5px; color:var(--ink-faint); margin-top:2px;">File uploads aren't wired up yet — that's a follow-up step (needs Supabase Storage). Payment dates/amounts below do save.</p>
 
         <div id="paymentRows" style="margin-top:12px;"></div>
 
@@ -402,6 +451,321 @@
         </div>
 
         <div id="criteriaList" style="margin-top:8px;"></div>
+
+        <div class="section-title">Daily operating results</div>
+        <div class="form-grid two" style="grid-template-columns:repeat(4,1fr);">
+          <div class="form-field"><label>New leads</label><input type="number" id="sc_newleads" value="0"></div>
+          <div class="form-field"><label>Follow-ups completed</label><input type="number" id="sc_followups" value="0"></div>
+          <div class="form-field"><label>Pax closed</label><input type="number" id="sc_paxclosed" value="0"></div>
+          <div class="form-field"><label>Net sales collection</label><input type="number" id="sc_netsales" value="0"></div>
+        </div>
+        <div class="form-grid two" style="margin-top:18px;">
+          <div class="form-field"><label>Biggest win today</label><textarea id="sc_win"></textarea></div>
+          <div class="form-field"><label>Biggest challenge</label><textarea id="sc_challenge"></textarea></div>
+        </div>
+        <div class="form-field" style="margin-top:18px;">
+          <label>Tomorrow's recovery / growth plan</label>
+          <textarea id="sc_plan" placeholder="Name priority clients and exact next actions"></textarea>
+        </div>
+
+        <div class="card-title-row" style="margin-top:26px; padding-top:20px; border-top:1px solid var(--line);">
+          <h3 style="margin:0; font-size:16px; color:var(--navy-900);">Daily coaching &amp; supervisor feedback</h3>
+          <span class="eyebrow-line">Coaching</span>
+        </div>
+        <div class="form-grid two" style="margin-top:14px;">
+          <div class="form-field">
+            <label>Coaching focus</label>
+            <select id="sc_coaching_focus">
+              <option value="">Select coaching focus</option>
+              <option>Lead response time</option><option>Client engagement</option>
+              <option>Follow-up discipline</option><option>Product knowledge</option>
+              <option>Tracker hygiene</option><option>Closing technique</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label>Coaching status</label>
+            <select id="sc_coaching_status">
+              <option>For coaching</option><option>Coached</option><option>No coaching needed</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-field" style="margin-top:18px;">
+          <label>Coaching or remarks from supervisor</label>
+          <textarea id="sc_coaching_remarks" placeholder="Specific observation, coaching instruction, expected improvement, and follow-up date"></textarea>
+        </div>
+        <div class="form-field" style="margin-top:18px;">
+          <label>Agent acknowledgment / commitment</label>
+          <textarea id="sc_agent_commitment" placeholder="What the agent commits to apply on the next working day"></textarea>
+        </div>
+
+        <div style="display:flex; justify-content:flex-end; margin-top:26px;">
+          <button class="btn-primary" id="sc_submit" type="button" style="width:auto; padding:11px 26px;">Submit Daily Scorecard</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- DIGITAL VOUCHER ---------- -->
+    <section class="view" id="view-voucher">
+      <div class="view-head">
+        <div>
+          <div class="eyebrow-line">Discover Group Sales OS</div>
+          <h1>Digital Voucher</h1>
+          <p>Auto-generated from an existing Client Profile record</p>
+        </div>
+        <div class="date-pill">Thursday, July 16, 2026</div>
+      </div>
+
+      <div class="card">
+        <div class="form-field" style="max-width:480px;">
+          <label>Select client</label>
+          <select id="voucherClientSelect"><option value="">Choose a saved client profile…</option></select>
+        </div>
+      </div>
+
+      <div id="voucherEmpty" class="card" style="margin-top:20px; text-align:center; color:var(--ink-faint); padding:50px 0;">
+        Select a client above to generate their voucher.
+      </div>
+
+      <div id="voucherCard" style="display:none; margin-top:20px;">
+        <div class="banner">
+          <div>
+            <div class="eyebrow-line">Discover Group Travel Voucher</div>
+            <h2 id="v_destination">—</h2>
+            <p id="v_refline">—</p>
+          </div>
+          <div class="banner-stat" style="padding:10px;">
+            <img id="v_qr" src="" alt="Voucher QR code" style="width:110px; height:110px; border-radius:8px; background:#fff; padding:6px;">
+          </div>
+        </div>
+
+        <div class="split-row">
+          <div class="card">
+            <h3 style="margin:0 0 14px; font-size:16px; color:var(--navy-900);">Trip &amp; booking details</h3>
+            <div class="form-grid two" style="gap:14px;">
+              <div><div class="m-label">Destination / Package</div><div class="m-value" id="v_package">—</div></div>
+              <div><div class="m-label">Travel date</div><div class="m-value" id="v_traveldate">—</div></div>
+              <div><div class="m-label">Number of travelers</div><div class="m-value" id="v_travelers">—</div></div>
+              <div><div class="m-label">Booking status</div><div class="m-value" id="v_stage">—</div></div>
+              <div><div class="m-label">Visa status</div><div class="m-value" id="v_visa">—</div></div>
+              <div><div class="m-label">Booking reference</div><div class="m-value" id="v_bookingref">—</div></div>
+              <div><div class="m-label">Attached documents</div><div class="m-value" id="v_documents" style="font-size:13px;">—</div></div>
+            </div>
+
+            <h3 style="margin:24px 0 14px; font-size:16px; color:var(--navy-900);">Client &amp; emergency contact</h3>
+            <div class="form-grid two" style="gap:14px;">
+              <div><div class="m-label">Client name</div><div class="m-value" id="v_client">—</div></div>
+              <div><div class="m-label">Email</div><div class="m-value" id="v_email">—</div></div>
+              <div><div class="m-label">Mobile</div><div class="m-value" id="v_mobile">—</div></div>
+              <div><div class="m-label">Emergency contact</div><div class="m-value" id="v_emergency">—</div></div>
+              <div style="grid-column: span 2;"><div class="m-label">Physical address</div><div class="m-value" id="v_address">—</div></div>
+            </div>
+
+            <h3 style="margin:24px 0 14px; font-size:16px; color:var(--navy-900);">Inclusions, freebies &amp; special requests</h3>
+            <p style="font-size:13.5px; color:var(--ink-soft); margin:0 0 6px;"><strong>Optional tours:</strong> <span id="v_tours">None selected</span></p>
+            <p style="font-size:13.5px; color:var(--ink-soft); margin:0 0 6px;"><strong>Optional services:</strong> <span id="v_services">None selected</span></p>
+            <p style="font-size:13.5px; color:var(--ink-soft); margin:0 0 6px;"><strong>Freebies / discounts:</strong> <span id="v_freebies">None applied</span></p>
+            <p style="font-size:13.5px; color:var(--ink-soft); margin:0;"><strong>Special requests:</strong> <span id="v_requests">None noted</span></p>
+          </div>
+
+          <div class="card">
+            <h3 style="margin:0 0 14px; font-size:16px; color:var(--navy-900);">Payment summary</h3>
+            <div class="stat-card" style="margin-bottom:12px;">
+              <div class="label">Total package value</div><div class="value" id="v_totalvalue">₱0</div>
+            </div>
+            <div class="stat-card" style="margin-bottom:12px;">
+              <div class="label">Amount paid</div><div class="value" id="v_paid">₱0</div>
+            </div>
+            <div class="stat-card">
+              <div class="label">Balance due</div><div class="value" id="v_balance">₱0</div>
+            </div>
+            <p style="font-size:12px; color:var(--ink-faint); margin-top:14px;">Receipt files aren't attached here yet — that needs the file-storage step we haven't set up.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- COMPLIANCE RECORD ---------- -->
+    <section class="view" id="view-compliance">
+      <div class="view-head">
+        <div>
+          <div class="eyebrow-line">Discover Group Sales OS</div>
+          <h1>Compliance Record</h1>
+          <p>View your compliance history, notices, warnings, and related documents.</p>
+        </div>
+      </div>
+
+      <div class="stat-grid">
+        <div class="stat-card">
+          <div class="label">Compliance Status</div>
+          <div class="value" style="font-size:20px; color:var(--ok);">Good Standing</div>
+          <div class="hint">Thank you for maintaining professional standards.</div>
+        </div>
+        <div class="stat-card">
+          <div class="label">Warning Level</div>
+          <div class="value" style="font-size:20px;">None</div>
+          <div class="hint">0 of 3 warnings</div>
+        </div>
+        <div class="stat-card"><div class="label">Total Cases</div><div class="value">0</div><div class="hint">View your compliance cases</div></div>
+        <div class="stat-card"><div class="label">Last Updated</div><div class="value" style="font-size:16px;">—</div><div class="hint">No records yet</div></div>
+      </div>
+
+      <div class="card">
+        <div class="pill-group" id="compliancePills">
+          <button class="pill active" data-tab="overview">Overview</button>
+          <button class="pill" data-tab="incidents">Incident Reports</button>
+          <button class="pill" data-tab="notices">Notices to Explain</button>
+          <button class="pill" data-tab="warnings">Warnings</button>
+          <button class="pill" data-tab="documents">Documents</button>
+        </div>
+      </div>
+
+      <div class="split-row" style="margin-top:20px;">
+        <div class="card">
+          <h2 style="margin:0 0 2px; font-size:17px; color:var(--navy-900);">Compliance Cases</h2>
+          <p style="margin:0; font-size:13px; color:var(--ink-soft);">Summary of your compliance history</p>
+          <div class="registry-empty">No compliance cases on record.</div>
+        </div>
+
+        <div class="card alert-card">
+          <h3>Warning Level Guide</h3>
+          <ul style="padding-left:18px; margin:12px 0 0; color:var(--ink-soft); font-size:13.5px; line-height:1.8;">
+            <li><strong>Level 1</strong> — 1st Written Warning</li>
+            <li><strong>Level 2</strong> — 2nd Written Warning</li>
+            <li><strong>Level 3</strong> — Final Written Warning</li>
+          </ul>
+          <p style="font-size:12.5px; color:var(--ink-faint); margin-top:14px;">Upon reaching Level 3, further action may be taken in accordance with company policies.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- RESOURCES ---------- -->
+    <section class="view" id="view-resources">
+      <div class="view-head">
+        <div>
+          <div class="eyebrow-line">Discover Group Sales OS</div>
+          <h1>Resources &amp; Quick Access</h1>
+          <p>Important resources to guide you in your role and responsibilities.</p>
+        </div>
+      </div>
+
+      <div class="stat-grid" style="grid-template-columns:repeat(3,1fr);">
+        <div class="stat-card">
+          <div class="label" style="font-size:14px; font-weight:700; color:var(--navy-900);">Code of Conduct</div>
+          <div class="hint" style="margin-top:4px;">Review Discover Group's Code of Conduct and standards of behavior.</div>
+          <a href="#" onclick="return false;" style="display:inline-block; margin-top:12px; font-size:13px; font-weight:700; color:var(--gold-600); text-decoration:none;">View Document →</a>
+        </div>
+        <div class="stat-card">
+          <div class="label" style="font-size:14px; font-weight:700; color:var(--navy-900);">Role Expectations</div>
+          <div class="hint" style="margin-top:4px;">Understand what's expected in your role, key behaviors, and performance standards.</div>
+          <a href="#" onclick="return false;" style="display:inline-block; margin-top:12px; font-size:13px; font-weight:700; color:var(--gold-600); text-decoration:none;">View Document →</a>
+        </div>
+        <div class="stat-card">
+          <div class="label" style="font-size:14px; font-weight:700; color:var(--navy-900);">Job Description</div>
+          <div class="hint" style="margin-top:4px;">See your job description, responsibilities, and key accountabilities.</div>
+          <a href="#" onclick="return false;" style="display:inline-block; margin-top:12px; font-size:13px; font-weight:700; color:var(--gold-600); text-decoration:none;">View Document →</a>
+        </div>
+        <div class="stat-card">
+          <div class="label" style="font-size:14px; font-weight:700; color:var(--navy-900);">Deliverables &amp; Goals</div>
+          <div class="hint" style="margin-top:4px;">Check your goals, targets, and key deliverables for your role.</div>
+          <a href="#" onclick="return false;" style="display:inline-block; margin-top:12px; font-size:13px; font-weight:700; color:var(--gold-600); text-decoration:none;">View Document →</a>
+        </div>
+        <div class="stat-card">
+          <div class="label" style="font-size:14px; font-weight:700; color:var(--navy-900);">FAQs</div>
+          <div class="hint" style="margin-top:4px;">Answers to common questions about tools, process, and policies.</div>
+          <a href="#" onclick="return false;" style="display:inline-block; margin-top:12px; font-size:13px; font-weight:700; color:var(--gold-600); text-decoration:none;">View Document →</a>
+        </div>
+        <div class="stat-card">
+          <div class="label" style="font-size:14px; font-weight:700; color:var(--navy-900);">Protocols</div>
+          <div class="hint" style="margin-top:4px;">Step-by-step protocols for bookings, escalations, and client handling.</div>
+          <a href="#" onclick="return false;" style="display:inline-block; margin-top:12px; font-size:13px; font-weight:700; color:var(--gold-600); text-decoration:none;">View Document →</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- APPROVALS ---------- -->
+    <section class="view" id="view-approvals">
+      <div class="view-head">
+        <div>
+          <div class="eyebrow-line">Discover Group Sales OS</div>
+          <h1>Approvals</h1>
+          <p>Submit leave requests and client rebooking approvals for review</p>
+        </div>
+        <div class="date-pill">Thursday, July 16, 2026</div>
+      </div>
+
+      <div class="card">
+        <div class="pill-group" id="approvalTypePills">
+          <button class="pill active" data-type="leave">Leave Request</button>
+          <button class="pill" data-type="client">Client Request Approval</button>
+        </div>
+      </div>
+
+      <!-- LEAVE REQUEST FORM -->
+      <div class="card" id="leaveRequestForm">
+        <h2 style="margin:0 0 2px; font-size:17px; color:var(--navy-900);">Leave Request</h2>
+        <p style="margin:0 0 16px; font-size:13px; color:var(--ink-soft);">Sick leave, vacation leave, birthday leave, or personal leave</p>
+        <div class="form-grid">
+          <div class="form-field">
+            <label>Leave type</label>
+            <select id="lv_type">
+              <option>Sick Leave</option>
+              <option>Vacation Leave</option>
+              <option>Birthday Leave</option>
+              <option>Personal Leave</option>
+            </select>
+          </div>
+          <div class="form-field"><label>Start date</label><input type="date" id="lv_start"></div>
+          <div class="form-field"><label>End date</label><input type="date" id="lv_end"></div>
+        </div>
+        <div class="form-field" style="margin-top:18px;">
+          <label>Reason / notes</label>
+          <textarea id="lv_reason" placeholder="Brief reason for the request"></textarea>
+        </div>
+        <div style="display:flex; justify-content:flex-end; margin-top:20px;">
+          <button class="btn-primary" id="lv_submit" type="button" style="width:auto; padding:11px 24px;">Submit Leave Request</button>
+        </div>
+      </div>
+
+      <!-- CLIENT REQUEST APPROVAL FORM -->
+      <div class="card" id="clientRequestForm" style="display:none;">
+        <h2 style="margin:0 0 2px; font-size:17px; color:var(--navy-900);">Client Request Approval</h2>
+        <p style="margin:0 0 16px; font-size:13px; color:var(--ink-soft);">Rebooking / travel date change request — requires complete details for review</p>
+        <div class="form-grid">
+          <div class="form-field"><label>Full name of client</label><input type="text" id="cr_client" placeholder="Client full name"></div>
+          <div class="form-field"><label>Package name</label><input type="text" id="cr_package" placeholder="e.g. Route G Deluxe"></div>
+          <div class="form-field"><label>Number of persons</label><input type="number" id="cr_persons" value="1" min="1"></div>
+        </div>
+        <div class="form-grid" style="margin-top:18px;">
+          <div class="form-field"><label>Original travel date</label><input type="date" id="cr_orig_date"></div>
+          <div class="form-field"><label>New travel date</label><input type="date" id="cr_new_date"></div>
+        </div>
+        <div class="form-grid" style="margin-top:18px;">
+          <div class="form-field">
+            <label>Slots availability — original travel date</label>
+            <select id="cr_orig_slots"><option>Available</option><option>Limited</option><option>Fully booked</option><option>Not yet checked</option></select>
+          </div>
+          <div class="form-field">
+            <label>Slots availability — new travel date</label>
+            <select id="cr_new_slots"><option>Available</option><option>Limited</option><option>Fully booked</option><option>Not yet checked</option></select>
+          </div>
+        </div>
+        <div class="form-field" style="margin-top:18px;">
+          <label>Complete context of the situation</label>
+          <textarea id="cr_context" placeholder="Explain the full situation — reason for the change, client circumstances, and anything the approver needs to know"></textarea>
+        </div>
+        <div style="display:flex; justify-content:flex-end; margin-top:20px;">
+          <button class="btn-primary" id="cr_submit" type="button" style="width:auto; padding:11px 24px;">Submit for Approval</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title-row">
+          <div>
+            <h2>My Approval Requests</h2>
+            <p>Status of everything you've submitted</p>
+          </div>
+        </div>
+        <div id="approvalsList"></div>
       </div>
     </section>
 

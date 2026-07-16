@@ -10,6 +10,7 @@ const FUNNEL_STAGES = [
   { no: "05", label: "Strategic Nurturing" },
   { no: "06", label: "Reservation / Payment Processing" },
   { no: "07", label: "Successfully Booked" },
+  { no: "08", label: "Lost Opportunity" },
 ];
 
 const CRITERIA = [
@@ -17,8 +18,9 @@ const CRITERIA = [
   { title: "Personalized Client Engagement", desc: "Responses are natural, tailored, conversational, and never robotic or AI-like.", max: 20 },
   { title: "Warm & Professional Client Experience", desc: "Communication builds trust through warmth, empathy, professionalism, and confidence.", max: 10 },
   { title: "Strategic Follow-through & Follow-up Compliance", desc: "Every active lead is followed up within 24 hours using value-driven closing strategies.", max: 25 },
-  { title: "Accurate Tracker & Record Keeping", desc: "Client Profile, Leads Tracker, and Digital Travel Folders are complete and current.", max: 20 },
-  { title: "Closing Effectiveness", desc: "Objections are handled with a clear, confident path to reservation.", max: 15 },
+  { title: "Product Knowledge & Consultative Expertise", desc: "Information on packages, visas, itineraries, flights, and policies is accurate and confident.", max: 10 },
+  { title: "CRM / Sales Tracker & Funnel Management", desc: "Every lead has complete records, correct stage, next action, strategy, and remarks.", max: 10 },
+  { title: "Sales Initiative & Opportunity Maximization", desc: "Consultant proactively offers alternatives, dates, packages, promotions, and upgrades.", max: 15 },
 ];
 
 const currency = n => "₱" + Number(n).toLocaleString();
@@ -73,7 +75,7 @@ async function loadProfileAndEnter(userId) {
   }
   currentProfile = profile;
   enterWorkspace(profile.full_name, profile.role);
-  await Promise.all([loadLeads(), loadRanking()]);
+  await Promise.all([loadLeads(), loadRanking(), renderUrgentAlerts(), loadApprovals()]);
 }
 
 function enterWorkspace(name, role) {
@@ -147,15 +149,73 @@ async function loadRanking() {
   if (sel) { sel.innerHTML = optionsHtml; if (currentProfile) sel.value = currentProfile.id; }
   const cpSel = document.getElementById("cp_consultant");
   if (cpSel) { cpSel.innerHTML = optionsHtml; if (currentProfile) cpSel.value = currentProfile.id; }
+
+  renderAgentPerformance(profiles);
+}
+
+// ---------- Agent Performance Overview (Team Dashboard) ----------
+function renderAgentPerformance(profiles) {
+  const grid = document.getElementById("agentPerfGrid");
+  if (!grid) return;
+  grid.innerHTML = "";
+  profiles.forEach(p => {
+    const card = document.createElement("div");
+    card.className = "agent-perf-card";
+    card.innerHTML = `
+      <div class="agent-perf-head">
+        <h4>${p.full_name}</h4>
+        <span>0 active opportunities</span>
+      </div>
+      <div class="agent-perf-metrics">
+        <div><div class="num">0</div><div class="lbl">leads</div></div>
+        <div><div class="num">0</div><div class="lbl">pax</div></div>
+        <div><div class="num">₱0</div><div class="lbl">NSC</div></div>
+        <div><div class="num">0</div><div class="lbl">score</div></div>
+        <div style="grid-column: span 2;"><div class="num">₱0</div><div class="lbl">commission</div></div>
+      </div>`;
+    grid.appendChild(card);
+  });
+}
+
+// ---------- Urgent Admin Attention: real overdue follow-ups ----------
+async function renderUrgentAlerts() {
+  const list = document.getElementById("urgentAlertsList");
+  if (!list) return;
+  const { data: overdue, error } = await supabaseClient
+    .from("leads")
+    .select("client_full_name, next_followup, agent_id, profiles:agent_id (full_name)")
+    .lt("next_followup", new Date().toISOString())
+    .not("next_followup", "is", null)
+    .order("next_followup", { ascending: true });
+
+  if (error || !overdue || overdue.length === 0) {
+    list.innerHTML = "<li>No urgent alerts.</li>";
+    return;
+  }
+  list.innerHTML = "";
+  overdue.forEach(l => {
+    const li = document.createElement("li");
+    li.className = "alert-item";
+    const agentName = l.profiles?.full_name ? l.profiles.full_name.split(" ")[0] : "Unassigned";
+    li.innerHTML = `
+      <div class="name">${(l.client_full_name || "Unnamed client")}</div>
+      <div class="note">${agentName}: follow up</div>
+      <div class="overdue">Overdue since ${new Date(l.next_followup).toLocaleString()}</div>`;
+    list.appendChild(li);
+  });
 }
 
 // ---------- Leads Tracker (real data) ----------
+let allLeadsCache = [];
+
 async function loadLeads() {
   if (!currentProfile) return;
   const { data: leads, error } = await supabaseClient
     .from("leads")
     .select("*")
     .order("created_at", { ascending: false });
+
+  allLeadsCache = leads || [];
 
   const box = document.querySelector("#view-leads .card:last-child");
   const countLabel = box.querySelector("span");
@@ -164,10 +224,69 @@ async function loadLeads() {
   if (error || !leads || leads.length === 0) {
     countLabel.textContent = "0 records";
     empty.textContent = "No leads found for this date range.";
-    return;
+  } else {
+    countLabel.textContent = leads.length + " record" + (leads.length === 1 ? "" : "s");
+    empty.textContent = leads.map(l => `${l.package_destination || "Untitled lead"} — ${l.journey_stage}`).join(" · ");
   }
-  countLabel.textContent = leads.length + " record" + (leads.length === 1 ? "" : "s");
-  empty.textContent = leads.map(l => `${l.package_destination || "Untitled lead"} — ${l.journey_stage}`).join(" · ");
+
+  populateVoucherSelect(allLeadsCache);
+}
+
+// ---------- Digital Voucher ----------
+function populateVoucherSelect(leads) {
+  const sel = document.getElementById("voucherClientSelect");
+  if (!sel) return;
+  const withNames = leads.filter(l => l.client_full_name);
+  sel.innerHTML = '<option value="">Choose a saved client profile…</option>' +
+    withNames.map(l => `<option value="${l.id}">${l.client_full_name} — ${l.package_destination || "No package set"}</option>`).join("");
+}
+
+document.getElementById("voucherClientSelect")?.addEventListener("change", (e) => {
+  const lead = allLeadsCache.find(l => l.id === e.target.value);
+  const empty = document.getElementById("voucherEmpty");
+  const card = document.getElementById("voucherCard");
+  if (!lead) { empty.style.display = "block"; card.style.display = "none"; return; }
+  empty.style.display = "none";
+  card.style.display = "block";
+  renderVoucher(lead);
+});
+
+function renderVoucher(l) {
+  const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val || "—"; };
+  const ref = l.booking_reference || l.id.slice(0, 8).toUpperCase();
+
+  set("v_destination", l.package_destination || "Travel Package");
+  set("v_refline", "Ref: " + ref + (l.travel_date ? " · Travel date " + l.travel_date : ""));
+  set("v_package", l.package_destination);
+  set("v_traveldate", l.travel_date);
+  set("v_travelers", l.travelers);
+  set("v_stage", l.journey_stage);
+  set("v_visa", l.visa_status);
+  set("v_bookingref", ref);
+  set("v_client", l.client_full_name);
+  set("v_email", l.client_email);
+  set("v_mobile", l.client_mobile);
+  set("v_emergency", l.emergency_contact_name ? `${l.emergency_contact_name} (${l.emergency_contact_phone || "no number"})` : null);
+  set("v_address", l.client_address);
+  set("v_tours", l.optional_tours);
+  set("v_services", l.optional_services);
+  set("v_freebies", [l.applied_discounts, l.special_freebies].filter(Boolean).join(" · "));
+  set("v_requests", l.special_requests);
+
+  const paid = (l.payments || []).reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+  const total = Number(l.deal_value) || 0;
+  set("v_totalvalue", currency(total));
+  set("v_paid", currency(paid));
+  set("v_balance", currency(Math.max(total - paid, 0)));
+
+  const qrData = encodeURIComponent(`Discover Group Voucher | ${ref} | ${l.client_full_name || ""}`);
+  document.getElementById("v_qr").src = `https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=${qrData}`;
+
+  const docLinks = [];
+  if (l.booking_confirmation_path) docLinks.push(`<a href="#" onclick="viewDocument('${l.booking_confirmation_path}'); return false;">Booking confirmation</a>`);
+  (l.payments || []).forEach((p, i) => { if (p.receipt_path) docLinks.push(`<a href="#" onclick="viewDocument('${p.receipt_path}'); return false;">Receipt ${i + 1}</a>`); });
+  const docsEl = document.getElementById("v_documents");
+  if (docsEl) docsEl.innerHTML = docLinks.length ? docLinks.join(" · ") : "No files attached";
 }
 
 // ---------- Client Profile: payment installment rows (1–15) ----------
@@ -189,28 +308,53 @@ function renderPaymentRows() {
           <option value="">Select</option><option>Bank transfer</option><option>Credit card</option><option>Cash</option><option>GCash</option>
         </select>
       </div>
-      <div class="form-field" style="flex:1;"><label>Receipt / deposit slip</label><input type="file" disabled></div>`;
+      <div class="form-field" style="flex:1;"><label>Receipt / deposit slip</label><input type="file" class="pay-receipt" data-idx="${i}"></div>`;
     wrap.appendChild(row);
   }
 }
 renderPaymentRows();
 
-function collectPayments() {
+const DOCS_BUCKET = "client-documents";
+
+async function uploadDocument(file) {
+  if (!file || !currentProfile) return null;
+  const path = `${currentProfile.id}/${Date.now()}-${file.name}`;
+  const { error } = await supabaseClient.storage.from(DOCS_BUCKET).upload(path, file);
+  if (error) { console.error("Upload failed:", error.message); return null; }
+  return path;
+}
+
+window.viewDocument = async function (path) {
+  if (!path) return;
+  const { data, error } = await supabaseClient.storage.from(DOCS_BUCKET).createSignedUrl(path, 300);
+  if (error || !data?.signedUrl) { alert("Couldn't open that file."); return; }
+  window.open(data.signedUrl, "_blank");
+};
+
+async function collectPayments() {
   const payments = [];
-  document.querySelectorAll(".pay-date").forEach(dateEl => {
+  const rows = [...document.querySelectorAll(".pay-date")];
+  for (const dateEl of rows) {
     const idx = dateEl.dataset.idx;
     const amountEl = document.querySelector(`.pay-amount[data-idx="${idx}"]`);
     const methodEl = document.querySelector(`.pay-method[data-idx="${idx}"]`);
+    const receiptEl = document.querySelector(`.pay-receipt[data-idx="${idx}"]`);
     if (dateEl.value || Number(amountEl.value) > 0) {
-      payments.push({ date: dateEl.value || null, amount: Number(amountEl.value) || 0, method: methodEl.value || null });
+      const receiptFile = receiptEl?.files?.[0];
+      const receipt_path = receiptFile ? await uploadDocument(receiptFile) : null;
+      payments.push({ date: dateEl.value || null, amount: Number(amountEl.value) || 0, method: methodEl.value || null, receipt_path });
     }
-  });
+  }
   return payments;
 }
 
 // Save the full Client Profile form as a new lead
-function buildClientProfilePayload() {
+async function buildClientProfilePayload() {
   const v = id => document.getElementById(id)?.value || null;
+  const bookingFile = document.getElementById("cp_booking_file")?.files?.[0];
+  const booking_confirmation_path = bookingFile ? await uploadDocument(bookingFile) : null;
+  const payments = await collectPayments();
+
   return {
     agent_id: currentProfile.id,
     client_full_name: v("cp_fullname"),
@@ -219,6 +363,9 @@ function buildClientProfilePayload() {
     inquiry_date: v("cp_inquiry_date"),
     inquiry_time: v("cp_inquiry_time"),
     assigned_consultant: v("cp_consultant"),
+    emergency_contact_name: v("cp_emergency_name"),
+    emergency_contact_phone: v("cp_emergency_phone"),
+    client_address: v("cp_address"),
     package_destination: v("cp_destination"),
     travel_date: v("cp_travel_date"),
     travelers: Number(v("cp_travelers")) || 1,
@@ -233,7 +380,8 @@ function buildClientProfilePayload() {
     closing_strategy: v("cp_strategy"),
     remarks: v("cp_remarks"),
     booking_reference: v("cp_booking_ref"),
-    payments: collectPayments(),
+    booking_confirmation_path,
+    payments,
     visa_service_availed: v("cp_visa_availed"),
     visa_service_fee: Number(v("cp_visa_fee")) || 0,
     visa_service_discount: Number(v("cp_visa_discount")) || 0,
@@ -250,16 +398,37 @@ function buildClientProfilePayload() {
   };
 }
 
-async function saveClientProfile(btn, label) {
+async function saveClientProfile(btn, label, syncToHubspot) {
   if (!currentProfile) return;
+  btn.textContent = "Uploading files…";
+  const payload = await buildClientProfilePayload();
   btn.textContent = "Saving…";
-  const { error } = await supabaseClient.from("leads").insert(buildClientProfilePayload());
-  btn.textContent = error ? "Error — try again" : "Saved ✓";
-  if (!error) { await loadLeads(); setTimeout(() => (btn.textContent = label), 1500); }
+  const { error } = await supabaseClient.from("leads").insert(payload);
+
+  if (error) {
+    btn.textContent = "Error — try again";
+    setTimeout(() => (btn.textContent = label), 1800);
+    return;
+  }
+
+  await loadLeads();
+
+  if (!syncToHubspot) {
+    btn.textContent = "Saved ✓";
+    setTimeout(() => (btn.textContent = label), 1500);
+    return;
+  }
+
+  btn.textContent = "Syncing to HubSpot…";
+  const { data: syncResult, error: syncError } = await supabaseClient.functions.invoke("hubspot-sync", {
+    body: payload,
+  });
+  btn.textContent = syncError || syncResult?.error ? "Saved, but HubSpot sync failed" : "Saved & synced ✓";
+  setTimeout(() => (btn.textContent = label), 2200);
 }
 
-document.getElementById("cp_save_draft")?.addEventListener("click", (e) => saveClientProfile(e.target, "Save draft"));
-document.getElementById("cp_save_sync")?.addEventListener("click", (e) => saveClientProfile(e.target, "Save Client Profile & Sync to HubSpot"));
+document.getElementById("cp_save_draft")?.addEventListener("click", (e) => saveClientProfile(e.target, "Save draft", false));
+document.getElementById("cp_save_sync")?.addEventListener("click", (e) => saveClientProfile(e.target, "Save Client Profile & Sync to HubSpot", true));
 
 // ---------- Funnel ----------
 function renderFunnel(targetId) {
@@ -279,6 +448,22 @@ renderFunnel("funnelGridAgent");
 document.querySelectorAll("#leadPills .pill").forEach(p => {
   p.addEventListener("click", () => {
     document.querySelectorAll("#leadPills .pill").forEach(x => x.classList.remove("active"));
+    p.classList.add("active");
+  });
+});
+
+// ---------- Team Dashboard period filter pills ----------
+document.querySelectorAll("#teamPeriodPills .pill").forEach(p => {
+  p.addEventListener("click", () => {
+    document.querySelectorAll("#teamPeriodPills .pill").forEach(x => x.classList.remove("active"));
+    p.classList.add("active");
+  });
+});
+
+// ---------- Compliance Record tab pills ----------
+document.querySelectorAll("#compliancePills .pill").forEach(p => {
+  p.addEventListener("click", () => {
+    document.querySelectorAll("#compliancePills .pill").forEach(x => x.classList.remove("active"));
     p.classList.add("active");
   });
 });
@@ -338,38 +523,130 @@ function updateTotalScore() {
 
 renderCriteria();
 
-const scorecardCard = document.querySelector("#view-scorecard .card");
-if (scorecardCard) {
-  const saveScoreBtn = document.createElement("button");
-  saveScoreBtn.textContent = "Submit scorecard";
-  saveScoreBtn.className = "btn-primary";
-  saveScoreBtn.style.marginTop = "20px";
-  saveScoreBtn.style.width = "auto";
-  saveScoreBtn.style.padding = "11px 22px";
-  saveScoreBtn.addEventListener("click", async () => {
-    if (!currentProfile) return;
-    const agentId = document.getElementById("consultantSelect").value;
-    const evaluator = document.querySelector('#view-scorecard input[type="text"]').value;
-    const evalDate = document.querySelector('#view-scorecard input[type="date"]').value;
-    const scores = {};
-    CRITERIA.forEach((c, idx) => { scores[c.title] = ratings[idx] || 0; });
-    const total = Number(document.getElementById("totalScore").textContent);
+document.getElementById("sc_submit")?.addEventListener("click", async (e) => {
+  const btn = e.target;
+  if (!currentProfile) return;
+  const agentId = document.getElementById("consultantSelect").value;
+  const evaluator = document.querySelector('#view-scorecard input[type="text"]').value;
+  const evalDate = document.querySelector('#view-scorecard input[type="date"]').value;
+  const scores = {};
+  CRITERIA.forEach((c, idx) => { scores[c.title] = ratings[idx] || 0; });
+  const total = Number(document.getElementById("totalScore").textContent);
+  const v = id => document.getElementById(id)?.value || null;
 
-    saveScoreBtn.textContent = "Saving…";
-    const { error } = await supabaseClient.from("scorecards").insert({
-      agent_id: agentId,
-      evaluator_name: evaluator,
-      evaluation_date: evalDate || new Date().toISOString().slice(0, 10),
-      scores,
-      total_score: total,
-    });
-    saveScoreBtn.textContent = error ? "Error — try again" : "Submitted ✓";
-    if (!error) setTimeout(() => (saveScoreBtn.textContent = "Submit scorecard"), 1500);
+  btn.textContent = "Saving…";
+  const { error } = await supabaseClient.from("scorecards").insert({
+    agent_id: agentId,
+    evaluator_name: evaluator,
+    evaluation_date: evalDate || new Date().toISOString().slice(0, 10),
+    scores,
+    total_score: total,
+    new_leads: Number(v("sc_newleads")) || 0,
+    followups_completed: Number(v("sc_followups")) || 0,
+    pax_closed: Number(v("sc_paxclosed")) || 0,
+    net_sales_collection: Number(v("sc_netsales")) || 0,
+    biggest_win: v("sc_win"),
+    biggest_challenge: v("sc_challenge"),
+    recovery_plan: v("sc_plan"),
+    coaching_focus: v("sc_coaching_focus"),
+    coaching_status: v("sc_coaching_status"),
+    coaching_remarks: v("sc_coaching_remarks"),
+    agent_commitment: v("sc_agent_commitment"),
   });
-  scorecardCard.appendChild(saveScoreBtn);
-}
+  btn.textContent = error ? "Error — try again" : "Submitted ✓";
+  if (!error) setTimeout(() => (btn.textContent = "Submit Daily Scorecard"), 1500);
+});
 
-// ---------- Live "today" date in headers ----------
+// ---------- Approvals: type toggle ----------
+document.querySelectorAll("#approvalTypePills .pill").forEach(p => {
+  p.addEventListener("click", () => {
+    document.querySelectorAll("#approvalTypePills .pill").forEach(x => x.classList.remove("active"));
+    p.classList.add("active");
+    const isLeave = p.dataset.type === "leave";
+    document.getElementById("leaveRequestForm").style.display = isLeave ? "block" : "none";
+    document.getElementById("clientRequestForm").style.display = isLeave ? "none" : "block";
+  });
+});
+
+document.getElementById("lv_submit")?.addEventListener("click", async (e) => {
+  const btn = e.target;
+  if (!currentProfile) return;
+  const v = id => document.getElementById(id)?.value || null;
+  btn.textContent = "Submitting…";
+  const { error } = await supabaseClient.from("leave_requests").insert({
+    agent_id: currentProfile.id,
+    leave_type: v("lv_type"),
+    start_date: v("lv_start"),
+    end_date: v("lv_end"),
+    reason: v("lv_reason"),
+  });
+  btn.textContent = error ? "Error — try again" : "Submitted ✓";
+  if (!error) {
+    ["lv_start", "lv_end", "lv_reason"].forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; });
+    await loadApprovals();
+  }
+  setTimeout(() => (btn.textContent = "Submit Leave Request"), 1800);
+});
+
+document.getElementById("cr_submit")?.addEventListener("click", async (e) => {
+  const btn = e.target;
+  if (!currentProfile) return;
+  const v = id => document.getElementById(id)?.value || null;
+  btn.textContent = "Submitting…";
+  const { error } = await supabaseClient.from("client_approval_requests").insert({
+    agent_id: currentProfile.id,
+    client_full_name: v("cr_client"),
+    package_name: v("cr_package"),
+    number_of_persons: Number(v("cr_persons")) || 1,
+    original_travel_date: v("cr_orig_date"),
+    new_travel_date: v("cr_new_date"),
+    original_date_slots: v("cr_orig_slots"),
+    new_date_slots: v("cr_new_slots"),
+    context: v("cr_context"),
+  });
+  btn.textContent = error ? "Error — try again" : "Submitted ✓";
+  if (!error) {
+    ["cr_client", "cr_package", "cr_context"].forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; });
+    await loadApprovals();
+  }
+  setTimeout(() => (btn.textContent = "Submit for Approval"), 1800);
+});
+
+async function loadApprovals() {
+  const list = document.getElementById("approvalsList");
+  if (!list || !currentProfile) return;
+
+  const [leaves, clientReqs] = await Promise.all([
+    supabaseClient.from("leave_requests").select("*").eq("agent_id", currentProfile.id).order("created_at", { ascending: false }),
+    supabaseClient.from("client_approval_requests").select("*").eq("agent_id", currentProfile.id).order("created_at", { ascending: false }),
+  ]);
+
+  const items = [
+    ...(leaves.data || []).map(r => ({
+      kind: "Leave", title: r.leave_type, sub: `${r.start_date || "?"} → ${r.end_date || "?"}`, status: r.status || "Pending", created: r.created_at,
+    })),
+    ...(clientReqs.data || []).map(r => ({
+      kind: "Client Request", title: r.client_full_name || "Unnamed client", sub: `${r.package_name || "—"} · ${r.original_travel_date || "?"} → ${r.new_travel_date || "?"}`, status: r.status || "Pending", created: r.created_at,
+    })),
+  ].sort((a, b) => new Date(b.created) - new Date(a.created));
+
+  if (items.length === 0) {
+    list.innerHTML = '<div class="registry-empty">No approval requests submitted yet.</div>';
+    return;
+  }
+
+  list.innerHTML = items.map(it => `
+    <div class="rank-row">
+      <div class="rank-badge" style="background:${it.kind === "Leave" ? "var(--navy-900)" : "var(--gold-600)"}; color:#fff;">${it.kind === "Leave" ? "L" : "C"}</div>
+      <div>
+        <div class="rank-name">${it.title}</div>
+        <div class="rank-sub">${it.kind} · ${it.sub}</div>
+      </div>
+      <div class="rank-metrics">
+        <div><div class="m-label">Status</div><div class="m-value">${it.status}</div></div>
+      </div>
+    </div>`).join("");
+}
 (function setDates() {
   const opts = { weekday: "long", year: "numeric", month: "long", day: "numeric" };
   const label = new Date().toLocaleDateString("en-US", opts);
