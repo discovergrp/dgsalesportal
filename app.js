@@ -979,7 +979,7 @@ function renderAgentDashboard() {
                 <tr>
                   <td style="${td}">${fmtDate(l.inquiry_date || l.created_at)}</td>
                   <td style="${td} font-weight:600; color:var(--navy-900);">${l.client_full_name || "Unnamed client"}</td>
-                  <td style="${td}">${fmtDate(l.travel_date)}</td>
+                  <td style="${td}">${fmtDateFlagged(l.travel_date)}</td>
                   <td style="${td} text-align:center;">${Number(l.travelers) || 0}</td>
                   <td style="${td}"><span style="display:inline-block; padding:3px 9px; border-radius:999px; font-size:11px; font-weight:600;
                     background:${(PIPELINE.find(s => s.label === l.journey_stage)?.colour || "#8a94a6")}1a;
@@ -1216,6 +1216,7 @@ function openClientProfile(leadId) {
   const value = Number(l.deal_value) || 0;
   const balance = Math.max(value - paid, 0);
   const docs = docCount(l.id);
+  const problems = leadProblems(l);
 
   let overlay = document.getElementById("profileOverlay");
   if (!overlay) {
@@ -1243,8 +1244,7 @@ function openClientProfile(leadId) {
             <span style="font-size:12.5px; color:var(--ink-soft);">${l.package_destination || "No package"}</span>
             <span style="font-size:12.5px; color:var(--ink-faint);">· ${agentName(l.agent_id)}</span>
           </div>
-        </div>
-        <button type="button" id="profileClose"
+        </div>        <button type="button" id="profileClose"
           style="border:1px solid var(--line); background:#fff; border-radius:8px; padding:8px 14px;
           font-size:13px; font-weight:700; color:var(--navy-900); cursor:pointer; font-family:inherit;">Close ✕</button>
       </div>
@@ -1268,6 +1268,16 @@ function openClientProfile(leadId) {
         </div>
       </div>
 
+      ${problems.length ? `
+        <div style="margin-top:16px; padding:12px 14px; background:#fdecea; border:1px solid #b42318;
+          border-radius:10px;">
+          <div style="font-size:12.5px; font-weight:700; color:#b42318; margin-bottom:4px;">
+            ⚠ ${problems.length} thing${problems.length === 1 ? "" : "s"} to check on this record</div>
+          <ul style="margin:0; padding-left:18px; font-size:12.5px; color:#b42318; line-height:1.7;">
+            ${problems.map(p => `<li>${p}</li>`).join("")}
+          </ul>
+        </div>` : ""}
+
       ${profileSection("Client information", [
         profileRow("Full name", l.client_full_name),
         profileRow("Email", l.client_email),
@@ -1285,7 +1295,7 @@ function openClientProfile(leadId) {
 
       ${profileSection("Travel profile", [
         profileRow("Package / Destination", l.package_destination),
-        profileRow("Preferred travel date", l.travel_date ? fmtDate(l.travel_date) : null),
+        profileRow("Preferred travel date", l.travel_date ? fmtDateFlagged(l.travel_date) : null),
         profileRow("Number of travelers", l.travelers),
         profileRow("Visa status", l.visa_status),
         profileRow("Lead source", l.lead_source),
@@ -1735,6 +1745,41 @@ function stageColour(stage) {
   return "var(--navy-900)";
 }
 
+// ---------- Data quality flags ----------
+// Nothing here changes a record. It marks values that look wrong so the
+// person who entered them can decide — a travel date in the year 0001 is
+// almost certainly a half-typed year, but only the agent knows what it
+// should have been.
+function dateLooksWrong(value) {
+  if (!value) return false;
+  const d = value.length <= 10 ? new Date(value + "T00:00:00") : new Date(value);
+  if (isNaN(d)) return true;
+  const y = d.getFullYear();
+  return y < 2000 || y > 2100;
+}
+
+// Everything suspect about one lead, in plain words.
+function leadProblems(l) {
+  const out = [];
+  if (dateLooksWrong(l.travel_date)) out.push("Travel date looks wrong — the year didn't save");
+  if (dateLooksWrong(l.inquiry_date)) out.push("Inquiry date looks wrong — the year didn't save");
+  if (dateLooksWrong(l.next_followup)) out.push("Follow-up date looks wrong");
+  if (l.travel_date && l.inquiry_date && !dateLooksWrong(l.travel_date) && !dateLooksWrong(l.inquiry_date)
+      && new Date(l.travel_date) < new Date(l.inquiry_date)) {
+    out.push("Travel date is before the inquiry date");
+  }
+  return out;
+}
+
+const FLAG_RED = "#b42318";
+
+// A date for display, in red with a warning if it doesn't look right.
+function fmtDateFlagged(value) {
+  if (!dateLooksWrong(value)) return fmtDate(value);
+  const raw = String(value).slice(0, 10);
+  return `<span style="color:${FLAG_RED}; font-weight:700;" title="This date looks wrong — please correct it">⚠ ${raw}</span>`;
+}
+
 function fmtDate(value) {
   if (!value) return "—";
   const d = value.length <= 10 ? new Date(value + "T00:00:00") : new Date(value);
@@ -1937,7 +1982,18 @@ function renderLeadsTable() {
 
   const td = "padding:14px 12px; font-size:13.5px; border-bottom:1px solid rgba(0,0,0,.05); vertical-align:middle; color:var(--ink-soft);";
 
+  // Count what needs checking, so 44 bad records among 276 can be found
+  // rather than spotted by eye.
+  const flagged = all.filter(l => leadProblems(l).length > 0).length;
+  const flagNote = flagged
+    ? `<div style="margin:0 0 12px; padding:10px 13px; background:#fdecea; border:1px solid ${FLAG_RED};
+        border-radius:8px; font-size:12.5px; color:${FLAG_RED};">
+        ⚠ <strong>${flagged}</strong> of these ${all.length} records need checking — marked in red.
+        Open a client to see what's wrong.</div>`
+    : "";
+
   wrap.innerHTML = `
+    ${flagNote}
     <div style="overflow-x:auto;">
       <table style="width:100%; border-collapse:collapse; min-width:860px;">
         <thead>
@@ -1956,7 +2012,7 @@ function renderLeadsTable() {
             <tr>
               <td style="${td}">${fmtDate(l.inquiry_date || l.created_at)}</td>
               <td style="${td} font-weight:600; color:var(--navy-900);">${l.client_full_name || "Unnamed client"}</td>
-              <td style="${td}">${fmtDate(l.travel_date)}</td>
+              <td style="${td}">${fmtDateFlagged(l.travel_date)}</td>
               <td style="${td} text-align:center;">${Number(l.travelers) || 0}</td>
               <td style="${td}">${l.client_mobile || "—"}</td>
               <td style="${td}">${agentName(l.agent_id)}</td>
