@@ -360,11 +360,10 @@ async function loadScorecards() {
 // Redraws every derived view. Safe to call before the data arrives.
 function renderAll() {
   renderTeamStats();
-  renderAgentStats();
   renderRanking();
   renderAgentPerformance();
   renderTeamFunnel();
-  renderAgentFunnel();
+  renderAgentDashboard();
   renderLeadsTable();
   renderUrgentAlerts();
 }
@@ -505,21 +504,355 @@ function renderTeamStats() {
   if (bannerValue) bannerValue.innerHTML = `${avg}<span> /100</span>`;
 }
 
-function renderAgentStats() {
-  if (!currentProfile) return;
-  const today = new Date().toISOString().slice(0, 10);
-  const dayRange = { start: new Date(today + "T00:00:00"), end: new Date(today + "T23:59:59") };
-  const pax = paxOnDay(currentProfile.id, today);
+// ---------- Agent Dashboard ----------
+// The whole page is built here rather than in index.html, so the layout and
+// the numbers stay in one place.
 
-  setStat("view-agent", "Net sales (today)", currency(netSalesInRange(currentProfile.id, dayRange)));
-  setStat("view-agent", "Pax closed", pax);
-  setStat("view-agent", "Daily bonus", currency(pax * bonusPerHead(pax)));
-  setStat("view-agent", "Commission", currency(commissionOn(monthlyNetSales(currentProfile.id))));
+let agentPeriod = "month";      // month | last | all
+let agentSearch = "";
+let agentPage = 1;
+const AGENT_LEADS_PER_PAGE = 5;
+
+// The funnel counts leads that reached a stage *or moved past it*, which is
+// what makes each step a real drop-off rather than a snapshot.
+const PIPELINE = [
+  { label: "New Inquiry", colour: "#1e3a6d" },
+  { label: "Discovery & Qualification", colour: "#2f5596" },
+  { label: "Solution Presented", colour: "#4a6fb5" },
+  { label: "Decision in Progress", colour: "#7b6bc4" },
+  { label: "Strategic Nurturing", colour: "#c9a227" },
+  { label: "Reservation / Payment Processing", colour: "#4a9d8e" },
+  { label: "Successfully Booked", colour: "#2e8b57" },
+];
+
+function stageRank(stage) {
+  return PIPELINE.findIndex(s => s.label === stage);
 }
 
-function renderAgentFunnel() {
-  const mine = currentProfile ? allLeadsCache.filter(l => l.agent_id === currentProfile.id) : [];
-  drawFunnel("funnelGridAgent", mine);
+function agentRange(period) {
+  const now = new Date();
+  if (period === "month") {
+    return { start: new Date(now.getFullYear(), now.getMonth(), 1), end: null };
+  }
+  if (period === "last") {
+    return {
+      start: new Date(now.getFullYear(), now.getMonth() - 1, 1),
+      end: new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59),
+    };
+  }
+  return { start: null, end: null };
+}
+
+function myLeads(range) {
+  if (!currentProfile) return [];
+  const mine = allLeadsCache.filter(l => l.agent_id === currentProfile.id);
+  return range ? mine.filter(l => inRange(leadDate(l), range)) : mine;
+}
+
+function overviewFor(range) {
+  const leads = myLeads(range);
+  const atLeast = label => leads.filter(l => stageRank(l.journey_stage) >= stageRank(label)).length;
+  return {
+    total: leads.length,
+    qualified: atLeast("Discovery & Qualification"),
+    proposals: atLeast("Solution Presented"),
+    won: leads.filter(leadIsBooked).length,
+    revenue: netSalesInRange(currentProfile.id, range.start ? range : { start: null, end: null }),
+  };
+}
+
+// "12% vs last month" is meaningless without a baseline, so a metric with no
+// history to compare against says so instead of inventing a number.
+function deltaLabel(now, before) {
+  if (before === 0) return now === 0 ? "" : "new this month";
+  const pct = Math.round(((now - before) / before) * 100);
+  const up = pct >= 0;
+  return `<span style="color:${up ? "#2e8b57" : "#b42318"}; font-weight:600;">${up ? "▲" : "▼"} ${Math.abs(pct)}%</span>
+    <span style="color:var(--ink-faint);">vs last month</span>`;
+}
+
+function statTile(label, value, delta) {
+  return `
+    <div style="flex:1; min-width:170px; background:#fff; border:1px solid var(--line); border-radius:12px; padding:16px 18px;">
+      <div style="font-size:12px; color:var(--ink-soft); margin-bottom:8px;">${label}</div>
+      <div style="font-size:26px; font-weight:800; color:var(--navy-900); letter-spacing:-.02em;">${value}</div>
+      <div style="font-size:11.5px; margin-top:6px;">${delta || "&nbsp;"}</div>
+    </div>`;
+}
+
+function donutSlices(data, total, size = 170) {
+  const r = size / 2 - 18, cx = size / 2, cy = size / 2;
+  let angle = -Math.PI / 2;
+  return data.map(d => {
+    const slice = total ? (d.value / total) * Math.PI * 2 : 0;
+    const x1 = cx + r * Math.cos(angle), y1 = cy + r * Math.sin(angle);
+    angle += slice;
+    const x2 = cx + r * Math.cos(angle), y2 = cy + r * Math.sin(angle);
+    const large = slice > Math.PI ? 1 : 0;
+    if (slice === 0) return "";
+    // A full circle can't be drawn as a single arc — it collapses to a point.
+    if (slice >= Math.PI * 2 - 0.001) {
+      return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${d.colour}" stroke-width="26"/>`;
+    }
+    return `<path d="M ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2}"
+      fill="none" stroke="${d.colour}" stroke-width="26"/>`;
+  }).join("");
+}
+
+function activityFeed(leads) {
+  const items = [];
+  leads.forEach(l => {
+    const name = l.client_full_name || "Unnamed client";
+    items.push({ kind: "New lead added", name, at: new Date(l.created_at), colour: "#4a6fb5" });
+    if (l.updated_at && new Date(l.updated_at) - new Date(l.created_at) > 60000) {
+      items.push({ kind: "Lead updated", name, at: new Date(l.updated_at), colour: "#c9a227" });
+    }
+    (l.payments || []).forEach(p => {
+      if (p.date) items.push({ kind: `Payment ${currency(p.amount)}`, name, at: new Date(p.date + "T12:00:00"), colour: "#2e8b57" });
+    });
+  });
+  return items.sort((a, b) => b.at - a.at).slice(0, 6);
+}
+
+function timeAgo(d) {
+  const mins = Math.floor((Date.now() - d.getTime()) / 60000);
+  if (mins < 2) return "Just now";
+  if (mins < 60) return mins + "m ago";
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return hrs + "h ago";
+  const days = Math.floor(hrs / 24);
+  if (days === 1) return "Yesterday";
+  if (days < 30) return days + "d ago";
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function renderAgentDashboard() {
+  const view = document.getElementById("view-agent");
+  if (!view || !currentProfile) return;
+
+  // Clear whatever index.html shipped with, once.
+  let body = document.getElementById("agentBody");
+  if (!body) {
+    [...view.children].forEach(el => { if (!el.classList.contains("view-head")) el.remove(); });
+    body = document.createElement("div");
+    body.id = "agentBody";
+    view.appendChild(body);
+  }
+
+  const range = agentRange(agentPeriod);
+  const leads = myLeads(range);
+  const now = overviewFor(agentRange("month"));
+  const prev = overviewFor(agentRange("last"));
+  const scoped = agentPeriod === "month" ? now : overviewFor(range);
+
+  // Funnel
+  const funnelTotal = leads.filter(l => l.journey_stage !== LOST_STAGE).length;
+  const funnelRows = PIPELINE.map((s, i) => {
+    const count = leads.filter(l => l.journey_stage !== LOST_STAGE && stageRank(l.journey_stage) >= i).length;
+    const share = funnelTotal ? Math.round((count / funnelTotal) * 1000) / 10 : 0;
+    const width = 100 - i * 9;
+    return { ...s, count, share, width };
+  });
+  const lost = leads.filter(l => l.journey_stage === LOST_STAGE).length;
+
+  // Pipeline value by stage — open opportunities only
+  const pipeData = PIPELINE.slice(0, -1).map(s => ({
+    label: s.label, colour: s.colour,
+    value: leads.filter(l => l.journey_stage === s.label).reduce((sum, l) => sum + (Number(l.deal_value) || 0), 0),
+  })).filter(d => d.value > 0);
+  const pipeTotal = pipeData.reduce((s, d) => s + d.value, 0);
+
+  // Top destinations
+  const destMap = new Map();
+  leads.forEach(l => {
+    const d = (l.package_destination || "").trim();
+    if (d) destMap.set(d, (destMap.get(d) || 0) + 1);
+  });
+  const dests = [...destMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const destMax = dests.length ? dests[0][1] : 1;
+
+  // My Leads table
+  const q = agentSearch.trim().toLowerCase();
+  const tableLeads = leads
+    .filter(l => !q || [l.client_full_name, l.package_destination, l.client_mobile]
+      .some(v => (v || "").toLowerCase().includes(q)))
+    .sort((a, b) => (leadDate(b)?.getTime() || 0) - (leadDate(a)?.getTime() || 0));
+  const pages = Math.max(1, Math.ceil(tableLeads.length / AGENT_LEADS_PER_PAGE));
+  if (agentPage > pages) agentPage = pages;
+  const pageStart = (agentPage - 1) * AGENT_LEADS_PER_PAGE;
+  const rows = tableLeads.slice(pageStart, pageStart + AGENT_LEADS_PER_PAGE);
+
+  const feed = activityFeed(leads);
+  const th = "padding:10px 12px; text-align:left; font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-faint); border-bottom:1px solid var(--line); white-space:nowrap;";
+  const td = "padding:13px 12px; font-size:13px; border-bottom:1px solid rgba(0,0,0,.04); color:var(--ink-soft);";
+
+  body.innerHTML = `
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+        <h2 style="margin:0; font-size:16px; color:var(--navy-900);">Sales Overview</h2>
+        <select id="agentPeriodSelect" style="padding:8px 12px; border:1px solid var(--line); border-radius:8px; font-size:13px; font-family:inherit; background:#fff;">
+          <option value="month" ${agentPeriod === "month" ? "selected" : ""}>This Month</option>
+          <option value="last" ${agentPeriod === "last" ? "selected" : ""}>Last Month</option>
+          <option value="all" ${agentPeriod === "all" ? "selected" : ""}>All Time</option>
+        </select>
+      </div>
+      <div style="display:flex; gap:12px; flex-wrap:wrap;">
+        ${statTile("Total Leads", scoped.total, deltaLabel(now.total, prev.total))}
+        ${statTile("Qualified Leads", scoped.qualified, deltaLabel(now.qualified, prev.qualified))}
+        ${statTile("Proposals Sent", scoped.proposals, deltaLabel(now.proposals, prev.proposals))}
+        ${statTile("Won Sales", scoped.won, deltaLabel(now.won, prev.won))}
+        ${statTile("Revenue (PHP)", currency(scoped.revenue), deltaLabel(now.revenue, prev.revenue))}
+      </div>
+    </div>
+
+    <div style="display:grid; grid-template-columns: 1.1fr 1fr 0.8fr; gap:16px; margin-top:16px;">
+      <div class="card" style="margin:0;">
+        <h2 style="margin:0 0 14px; font-size:16px; color:var(--navy-900);">Sales Funnel</h2>
+        ${funnelTotal === 0 ? '<div class="registry-empty">No leads in this period yet.</div>' : funnelRows.map(r => `
+          <div style="display:flex; align-items:center; gap:12px; margin-bottom:6px;">
+            <div style="flex:1; min-width:0;">
+              <div style="width:${r.width}%; background:${r.colour}; color:#fff; padding:9px 12px;
+                border-radius:6px; font-size:12px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${r.label}</div>
+            </div>
+            <div style="width:44px; text-align:right; font-weight:700; color:var(--navy-900); font-size:13px;">${r.count}</div>
+            <div style="width:52px; text-align:right; font-size:12px; color:var(--ink-faint);">${r.share}%</div>
+          </div>`).join("")}
+        ${lost ? `<div style="margin-top:12px; font-size:12px; color:var(--ink-faint);">${lost} lost opportunit${lost === 1 ? "y" : "ies"} — not counted in the funnel above.</div>` : ""}
+      </div>
+
+      <div class="card" style="margin:0;">
+        <h2 style="margin:0 0 14px; font-size:16px; color:var(--navy-900);">Pipeline Value</h2>
+        ${pipeTotal === 0 ? '<div class="registry-empty">No open deal value yet.</div>' : `
+          <div style="display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
+            <div style="position:relative; width:170px; height:170px; flex-shrink:0;">
+              <svg viewBox="0 0 170 170" style="width:170px; height:170px;">${donutSlices(pipeData, pipeTotal)}</svg>
+              <div style="position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; pointer-events:none;">
+                <div style="font-size:17px; font-weight:800; color:var(--navy-900);">${shortCurrency(pipeTotal)}</div>
+                <div style="font-size:10.5px; color:var(--ink-faint);">Total Pipeline</div>
+              </div>
+            </div>
+            <div style="flex:1; min-width:150px;">
+              ${pipeData.map(d => `
+                <div style="display:flex; align-items:center; gap:8px; margin-bottom:7px; font-size:12px;">
+                  <span style="width:9px; height:9px; border-radius:50%; background:${d.colour}; flex-shrink:0;"></span>
+                  <span style="flex:1; color:var(--ink-soft); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${d.label}</span>
+                  <span style="color:var(--navy-900); font-weight:600; white-space:nowrap;">${shortCurrency(d.value)}</span>
+                  <span style="color:var(--ink-faint); width:34px; text-align:right;">${Math.round((d.value / pipeTotal) * 100)}%</span>
+                </div>`).join("")}
+            </div>
+          </div>`}
+      </div>
+
+      <div class="card" style="margin:0;">
+        <h2 style="margin:0 0 4px; font-size:16px; color:var(--navy-900);">Top Destinations</h2>
+        <p style="margin:0 0 14px; font-size:11.5px; color:var(--ink-faint);">by leads</p>
+        ${dests.length === 0 ? '<div class="registry-empty">No packages recorded.</div>' : dests.map(([name, n]) => `
+          <div style="margin-bottom:12px;">
+            <div style="display:flex; justify-content:space-between; font-size:12.5px; margin-bottom:5px;">
+              <span style="color:var(--navy-900); font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${name}</span>
+              <span style="color:var(--ink-soft); font-weight:700; margin-left:8px;">${n}</span>
+            </div>
+            <div style="height:5px; background:#eef1f6; border-radius:99px; overflow:hidden;">
+              <div style="width:${(n / destMax) * 100}%; height:100%; background:var(--navy-900); border-radius:99px;"></div>
+            </div>
+          </div>`).join("")}
+      </div>
+    </div>
+
+    <div style="display:grid; grid-template-columns: 2.4fr 1fr; gap:16px; margin-top:16px;">
+      <div class="card" style="margin:0;">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:14px; flex-wrap:wrap;">
+          <h2 style="margin:0; font-size:16px; color:var(--navy-900);">My Leads</h2>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <input id="agentSearchInput" type="search" placeholder="Search leads…" value="${agentSearch.replace(/"/g, "&quot;")}"
+              style="padding:8px 13px; border:1px solid var(--line); border-radius:8px; font-size:13px; font-family:inherit; min-width:190px;">
+            <button id="agentExportBtn" class="pill" type="button">↓ Export</button>
+            <button id="agentNewLeadBtn" type="button" style="padding:8px 15px; border:none; border-radius:8px;
+              background:var(--navy-900); color:#fff; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit;">+ New Lead</button>
+          </div>
+        </div>
+
+        ${rows.length === 0 ? '<div class="registry-empty">No leads to show.</div>' : `
+        <div style="overflow-x:auto;">
+          <table style="width:100%; border-collapse:collapse; min-width:760px;">
+            <thead><tr>
+              <th style="${th}">Date of inquiry</th>
+              <th style="${th}">Client name</th>
+              <th style="${th}">Travel date</th>
+              <th style="${th} text-align:center;">No. of pax</th>
+              <th style="${th}">Status</th>
+              <th style="${th} text-align:right;">Est. value</th>
+              <th style="${th}">Last activity</th>
+              <th style="${th}">Actions</th>
+            </tr></thead>
+            <tbody>
+              ${rows.map(l => `
+                <tr>
+                  <td style="${td}">${fmtDate(l.inquiry_date || l.created_at)}</td>
+                  <td style="${td} font-weight:600; color:var(--navy-900);">${l.client_full_name || "Unnamed client"}</td>
+                  <td style="${td}">${fmtDate(l.travel_date)}</td>
+                  <td style="${td} text-align:center;">${Number(l.travelers) || 0}</td>
+                  <td style="${td}"><span style="display:inline-block; padding:3px 9px; border-radius:999px; font-size:11px; font-weight:600;
+                    background:${(PIPELINE.find(s => s.label === l.journey_stage)?.colour || "#8a94a6")}1a;
+                    color:${PIPELINE.find(s => s.label === l.journey_stage)?.colour || "#8a94a6"};">${l.journey_stage || "—"}</span></td>
+                  <td style="${td} text-align:right;">${currency(l.deal_value)}</td>
+                  <td style="${td}">${l.updated_at ? timeAgo(new Date(l.updated_at)) : "—"}</td>
+                  <td style="${td}">
+                    <button class="agent-open" data-lead="${l.id}" type="button" title="View full profile"
+                      style="padding:6px 12px; border:1px solid var(--line); border-radius:7px; background:#fff;
+                      font-size:12px; font-weight:600; color:var(--navy-900); cursor:pointer; font-family:inherit;">View</button>
+                  </td>
+                </tr>`).join("")}
+            </tbody>
+          </table>
+        </div>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:14px;">
+          <div style="font-size:12.5px; color:var(--ink-faint);">Showing ${pageStart + 1} to ${pageStart + rows.length} of ${tableLeads.length} results</div>
+          <div style="display:flex; gap:5px;">
+            ${Array.from({ length: pages }, (_, i) => i + 1).map(n => `
+              <button class="agent-page" data-page="${n}" type="button"
+                style="min-width:30px; height:30px; border:1px solid ${n === agentPage ? "var(--navy-900)" : "var(--line)"};
+                border-radius:7px; background:${n === agentPage ? "var(--navy-900)" : "#fff"};
+                color:${n === agentPage ? "#fff" : "var(--ink-soft)"}; font-size:12.5px; font-weight:600; cursor:pointer; font-family:inherit;">${n}</button>`).join("")}
+          </div>
+        </div>`}
+      </div>
+
+      <div class="card" style="margin:0;">
+        <h2 style="margin:0 0 14px; font-size:16px; color:var(--navy-900);">Activity Feed</h2>
+        ${feed.length === 0 ? '<div class="registry-empty">Nothing yet.</div>' : feed.map(f => `
+          <div style="display:flex; gap:10px; margin-bottom:14px;">
+            <span style="width:7px; height:7px; border-radius:50%; background:${f.colour}; margin-top:6px; flex-shrink:0;"></span>
+            <div style="flex:1; min-width:0;">
+              <div style="font-size:12.5px; font-weight:600; color:var(--navy-900);">${f.kind}</div>
+              <div style="font-size:11.5px; color:var(--ink-soft); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${f.name}</div>
+            </div>
+            <div style="font-size:11px; color:var(--ink-faint); white-space:nowrap;">${timeAgo(f.at)}</div>
+          </div>`).join("")}
+      </div>
+    </div>`;
+
+  document.getElementById("agentPeriodSelect")?.addEventListener("change", (e) => {
+    agentPeriod = e.target.value; agentPage = 1; renderAgentDashboard();
+  });
+  const search = document.getElementById("agentSearchInput");
+  search?.addEventListener("input", (e) => {
+    agentSearch = e.target.value; agentPage = 1; renderAgentDashboard();
+    const el = document.getElementById("agentSearchInput");
+    if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+  });
+  document.getElementById("agentNewLeadBtn")?.addEventListener("click", () => goToView("client"));
+  document.getElementById("agentExportBtn")?.addEventListener("click", exportLeadsCsv);
+  body.querySelectorAll(".agent-page").forEach(b => b.addEventListener("click", () => {
+    agentPage = Number(b.dataset.page); renderAgentDashboard();
+  }));
+  body.querySelectorAll(".agent-open").forEach(b => b.addEventListener("click", () => {
+    const sel = document.getElementById("voucherClientSelect");
+    if (!sel) return;
+    sel.value = b.dataset.lead;
+    sel.dispatchEvent(new Event("change"));
+    goToView("voucher");
+  }));
 }
 
 // ---------- Urgent Admin Attention ----------
