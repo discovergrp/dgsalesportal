@@ -446,7 +446,7 @@ function goToView(view) {
 async function loadProfiles() {
   const { data, error } = await supabaseClient
     .from("profiles")
-    .select("id, full_name, role")
+    .select("id, full_name, role, rank")
     .order("full_name");
   if (!error && data) allProfilesCache = data;
 
