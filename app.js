@@ -1,6 +1,28 @@
 // ============================================================
-// Discover Group Sales Portal — mockup logic (client-side only)
+// Discover Group Sales Portal — application logic
 // ============================================================
+
+// ---- Commission rule ----
+// A consultant must collect at least ₱5,000,000 within the calendar month
+// to qualify. Once they do, they earn 1% of everything they collected that
+// month — not 1% of the excess. Below the threshold the commission is zero.
+// The total resets on the 1st of each month.
+const COMMISSION_THRESHOLD = 5000000;
+const COMMISSION_RATE = 0.01;
+// ---- Daily bonus rule ----
+// Counted per agent, per day. A booking's passengers land on the date of its
+// FIRST payment — the day the deposit settled. The tier is all-or-nothing:
+// close 10 passengers in a day and every one of the 10 earns ₱1,500, not
+// just the tenth. Below 10 in a day, nothing is earned.
+const BONUS_TIERS = [
+  { minPax: 40, perHead: 3000 },
+  { minPax: 30, perHead: 2500 },
+  { minPax: 20, perHead: 2000 },
+  { minPax: 10, perHead: 1500 },
+];
+
+const BOOKED_STAGE = "Successfully Booked";
+const LOST_STAGE = "Lost Opportunity";
 
 const FUNNEL_STAGES = [
   { no: "01", label: "New Inquiry" },
@@ -23,11 +45,127 @@ const CRITERIA = [
   { title: "Sales Initiative & Opportunity Maximization", desc: "Consultant proactively offers alternatives, dates, packages, promotions, and upgrades.", max: 15 },
 ];
 
-const currency = n => "₱" + Number(n).toLocaleString();
+const currency = n => "₱" + Number(n || 0).toLocaleString();
+const shortCurrency = n => {
+  const v = Number(n || 0);
+  if (v >= 1000000) return "₱" + (v / 1000000).toFixed(1).replace(/\.0$/, "") + "M";
+  if (v >= 1000) return "₱" + Math.round(v / 1000) + "k";
+  return "₱" + v;
+};
+
+// ---------- Shared data ----------
+let currentProfile = null;     // { id, full_name, role }
+let allLeadsCache = [];
+let allProfilesCache = [];
+let allScorecardsCache = [];
+let currentPeriod = "all";     // driven by the Team Dashboard pills
+let currentLeadFilter = "all"; // driven by the Leads Tracker pills
+
+// ---------- Lead maths ----------
+// Every number on every dashboard comes from these helpers, so a change
+// here flows through the cards, the ranking, the funnel and the table.
+
+function leadPaid(l) {
+  return (l.payments || []).reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+}
+
+function leadIsBooked(l) {
+  return l.journey_stage === BOOKED_STAGE;
+}
+
+function leadIsActive(l) {
+  return l.journey_stage !== BOOKED_STAGE && l.journey_stage !== LOST_STAGE;
+}
+
+function periodStart(period) {
+  const now = new Date();
+  if (period === "today") return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (period === "week") { const d = new Date(now); d.setDate(d.getDate() - 7); return d; }
+  if (period === "month") return new Date(now.getFullYear(), now.getMonth(), 1);
+  if (period === "quarter") { const d = new Date(now); d.setDate(d.getDate() - 90); return d; }
+  return null; // "all"
+}
+
+function leadsInPeriod(leads, period) {
+  const start = periodStart(period);
+  if (!start) return leads;
+  return leads.filter(l => l.created_at && new Date(l.created_at) >= start);
+}
+
+// Commission is all-or-nothing: clear the threshold and the whole month's
+// collections earn the rate; fall short and nothing is earned.
+function commissionOn(netSales) {
+  return netSales >= COMMISSION_THRESHOLD ? netSales * COMMISSION_RATE : 0;
+}
+
+// Commission always follows the calendar month, whatever period the
+// dashboard pills are showing, because that is when the target resets.
+function monthlyNetSales(agentId) {
+  return leadsInPeriod(allLeadsCache.filter(l => l.agent_id === agentId), "month")
+    .reduce((sum, l) => sum + leadPaid(l), 0);
+}
+
+// The rate every head earns once the day's tier is reached.
+function bonusPerHead(pax) {
+  return BONUS_TIERS.find(t => pax >= t.minPax)?.perHead || 0;
+}
+
+// The day a booking counts as closed: the date of its earliest payment.
+function firstPaymentDate(l) {
+  const dates = (l.payments || []).map(p => p.date).filter(Boolean).sort();
+  return dates[0] || null; // "YYYY-MM-DD"
+}
+
+// Passengers closed per day, keyed by date.
+function paxByDay(leads) {
+  const byDay = new Map();
+  leads.forEach(l => {
+    const day = firstPaymentDate(l);
+    if (!day) return;
+    byDay.set(day, (byDay.get(day) || 0) + (Number(l.travelers) || 0));
+  });
+  return byDay;
+}
+
+// Each day is scored on its own, then the qualifying days are added up.
+function bonusForAgent(agentId, period) {
+  const start = periodStart(period);
+  let total = 0;
+  paxByDay(allLeadsCache.filter(l => l.agent_id === agentId)).forEach((pax, day) => {
+    if (start && new Date(day + "T00:00:00") < start) return;
+    total += pax * bonusPerHead(pax);
+  });
+  return total;
+}
+
+// Roll a set of leads up into the figures the dashboards display.
+function summarise(leads) {
+  const booked = leads.filter(leadIsBooked);
+  const active = leads.filter(leadIsActive);
+  const netSales = leads.reduce((sum, l) => sum + leadPaid(l), 0);
+  const pax = booked.reduce((sum, l) => sum + (Number(l.travelers) || 0), 0);
+  return {
+    leads: leads.length,
+    active: active.length,
+    booked: booked.length,
+    pax,
+    netSales,
+    pipeline: active.reduce((sum, l) => sum + (Number(l.deal_value) || 0), 0),
+    commission: commissionOn(netSales),
+  };
+}
+
+function averageScore(agentId) {
+  const mine = allScorecardsCache.filter(s => s.agent_id === agentId);
+  if (mine.length === 0) return null;
+  return Math.round(mine.reduce((sum, s) => sum + (Number(s.total_score) || 0), 0) / mine.length);
+}
+
+function agentName(agentId) {
+  return allProfilesCache.find(p => p.id === agentId)?.full_name || "Unassigned";
+}
 
 // ---------- Real login (Supabase Auth) ----------
-let currentProfile = null; // { id, full_name, role }
-
 const pwToggle = document.getElementById("pwToggle");
 const pwInput = document.getElementById("pwInput");
 pwToggle.addEventListener("click", () => {
@@ -75,7 +213,8 @@ async function loadProfileAndEnter(userId) {
   }
   currentProfile = profile;
   enterWorkspace(profile.full_name, profile.role);
-  await Promise.all([loadLeads(), loadRanking(), renderUrgentAlerts(), loadApprovals()]);
+  await Promise.all([loadProfiles(), loadLeads(), loadScorecards(), loadApprovals()]);
+  renderAll();
 }
 
 function enterWorkspace(name, role) {
@@ -93,6 +232,8 @@ function enterWorkspace(name, role) {
 document.getElementById("logoutBtn").addEventListener("click", async () => {
   await supabaseClient.auth.signOut();
   currentProfile = null;
+  allLeadsCache = [];
+  allScorecardsCache = [];
   document.getElementById("app").classList.remove("active");
   document.getElementById("loginScreen").style.display = "flex";
   pwInput.value = "";
@@ -115,125 +256,284 @@ navButtons.forEach(btn => {
   });
 });
 
-// ---------- Ranking (real employees from the profiles table) ----------
-async function loadRanking() {
-  const { data: profiles, error } = await supabaseClient
+function goToView(view) {
+  const btn = document.querySelector(`#nav button[data-view="${view}"]`);
+  if (btn) btn.click();
+}
+
+// ---------- Loading data ----------
+async function loadProfiles() {
+  const { data, error } = await supabaseClient
     .from("profiles")
-    .select("id, full_name")
+    .select("id, full_name, role")
     .order("full_name");
+  if (!error && data) allProfilesCache = data;
 
-  const list = document.getElementById("rankingList");
-  list.innerHTML = "";
-  if (error || !profiles) return;
-
-  profiles.forEach((p, i) => {
-    const row = document.createElement("div");
-    row.className = "rank-row";
-    row.innerHTML = `
-      <div class="rank-badge">${i + 1}</div>
-      <div>
-        <div class="rank-name">${p.full_name}</div>
-        <div class="rank-sub">Daily performance</div>
-      </div>
-      <div class="rank-metrics">
-        <div><div class="m-label">Net sales</div><div class="m-value">₱0</div></div>
-        <div><div class="m-label">Pax closed</div><div class="m-value">0</div></div>
-        <div><div class="m-label">Daily bonus</div><div class="m-value">₱0</div></div>
-        <div><div class="m-label">Commission</div><div class="m-value">₱0</div></div>
-      </div>`;
-    list.appendChild(row);
-  });
-
-  // Consultant dropdowns — populate from real employees (scorecard + client profile)
-  const optionsHtml = profiles.map(p => `<option value="${p.id}">${p.full_name}</option>`).join("");
+  // Consultant dropdowns — populated from the real employee list
+  const optionsHtml = allProfilesCache.map(p => `<option value="${p.id}">${p.full_name}</option>`).join("");
   const sel = document.getElementById("consultantSelect");
   if (sel) { sel.innerHTML = optionsHtml; if (currentProfile) sel.value = currentProfile.id; }
   const cpSel = document.getElementById("cp_consultant");
   if (cpSel) { cpSel.innerHTML = optionsHtml; if (currentProfile) cpSel.value = currentProfile.id; }
-
-  renderAgentPerformance(profiles);
 }
-
-// ---------- Agent Performance Overview (Team Dashboard) ----------
-function renderAgentPerformance(profiles) {
-  const grid = document.getElementById("agentPerfGrid");
-  if (!grid) return;
-  grid.innerHTML = "";
-  profiles.forEach(p => {
-    const card = document.createElement("div");
-    card.className = "agent-perf-card";
-    card.innerHTML = `
-      <div class="agent-perf-head">
-        <h4>${p.full_name}</h4>
-        <span>0 active opportunities</span>
-      </div>
-      <div class="agent-perf-metrics">
-        <div><div class="num">0</div><div class="lbl">leads</div></div>
-        <div><div class="num">0</div><div class="lbl">pax</div></div>
-        <div><div class="num">₱0</div><div class="lbl">NSC</div></div>
-        <div><div class="num">0</div><div class="lbl">score</div></div>
-        <div style="grid-column: span 2;"><div class="num">₱0</div><div class="lbl">commission</div></div>
-      </div>`;
-    grid.appendChild(card);
-  });
-}
-
-// ---------- Urgent Admin Attention: real overdue follow-ups ----------
-async function renderUrgentAlerts() {
-  const list = document.getElementById("urgentAlertsList");
-  if (!list) return;
-  const { data: overdue, error } = await supabaseClient
-    .from("leads")
-    .select("client_full_name, next_followup, agent_id, profiles:agent_id (full_name)")
-    .lt("next_followup", new Date().toISOString())
-    .not("next_followup", "is", null)
-    .order("next_followup", { ascending: true });
-
-  if (error || !overdue || overdue.length === 0) {
-    list.innerHTML = "<li>No urgent alerts.</li>";
-    return;
-  }
-  list.innerHTML = "";
-  overdue.forEach(l => {
-    const li = document.createElement("li");
-    li.className = "alert-item";
-    const agentName = l.profiles?.full_name ? l.profiles.full_name.split(" ")[0] : "Unassigned";
-    li.innerHTML = `
-      <div class="name">${(l.client_full_name || "Unnamed client")}</div>
-      <div class="note">${agentName}: follow up</div>
-      <div class="overdue">Overdue since ${new Date(l.next_followup).toLocaleString()}</div>`;
-    list.appendChild(li);
-  });
-}
-
-// ---------- Leads Tracker (real data) ----------
-let allLeadsCache = [];
 
 async function loadLeads() {
   if (!currentProfile) return;
-  const { data: leads, error } = await supabaseClient
+  const { data, error } = await supabaseClient
     .from("leads")
     .select("*")
     .order("created_at", { ascending: false });
-
-  allLeadsCache = leads || [];
-
-  const box = document.querySelector("#view-leads .card:last-child");
-  const countLabel = box.querySelector("span");
-  const empty = box.querySelector(".registry-empty");
-
-  if (error || !leads || leads.length === 0) {
-    countLabel.textContent = "0 records";
-    empty.textContent = "No leads found for this date range.";
-  } else {
-    countLabel.textContent = leads.length + " record" + (leads.length === 1 ? "" : "s");
-    empty.textContent = leads.map(l => `${l.package_destination || "Untitled lead"} — ${l.journey_stage}`).join(" · ");
-  }
-
+  allLeadsCache = (!error && data) ? data : [];
   populateVoucherSelect(allLeadsCache);
 }
 
-// ---------- Digital Voucher ----------
+async function loadScorecards() {
+  const { data, error } = await supabaseClient
+    .from("scorecards")
+    .select("agent_id, total_score, evaluation_date");
+  allScorecardsCache = (!error && data) ? data : [];
+}
+
+// Redraws every derived view. Safe to call before the data arrives.
+function renderAll() {
+  renderRanking();
+  renderAgentPerformance();
+  renderTeamFunnel();
+  renderAgentFunnel();
+  renderLeadsTable();
+  renderUrgentAlerts();
+}
+
+// ---------- Daily Sales Ranking ----------
+function renderRanking() {
+  const list = document.getElementById("rankingList");
+  if (!list) return;
+
+  const scoped = leadsInPeriod(allLeadsCache, currentPeriod);
+
+  const rows = allProfilesCache
+    .map(p => {
+      const s = summarise(scoped.filter(l => l.agent_id === p.id));
+      const monthNet = monthlyNetSales(p.id);
+      return { profile: p, ...s, monthNet, commission: commissionOn(monthNet), bonus: bonusForAgent(p.id, currentPeriod) };
+    })
+    .sort((a, b) => b.netSales - a.netSales || b.pax - a.pax);
+
+  if (rows.length === 0) {
+    list.innerHTML = '<div class="registry-empty">No employees found.</div>';
+    return;
+  }
+
+  list.innerHTML = rows.map((r, i) => `
+    <div class="rank-row">
+      <div class="rank-badge">${i + 1}</div>
+      <div>
+        <div class="rank-name">${r.profile.full_name}</div>
+        <div class="rank-sub">${r.booked} booked · ${r.active} active · ${
+          r.monthNet >= COMMISSION_THRESHOLD
+            ? "commission earned this month"
+            : shortCurrency(COMMISSION_THRESHOLD - r.monthNet) + " more to qualify"
+        }</div>
+      </div>
+      <div class="rank-metrics">
+        <div><div class="m-label">Net sales</div><div class="m-value">${currency(r.netSales)}</div></div>
+        <div><div class="m-label">Pax closed</div><div class="m-value">${r.pax}</div></div>
+        <div><div class="m-label">Daily bonus</div><div class="m-value">${currency(r.bonus)}</div></div>
+        <div><div class="m-label">Commission</div><div class="m-value">${currency(r.commission)}</div></div>
+      </div>
+    </div>`).join("");
+}
+
+// ---------- Agent Performance Overview ----------
+function renderAgentPerformance() {
+  const grid = document.getElementById("agentPerfGrid");
+  if (!grid) return;
+
+  const scoped = leadsInPeriod(allLeadsCache, currentPeriod);
+
+  grid.innerHTML = allProfilesCache.map(p => {
+    const s = summarise(scoped.filter(l => l.agent_id === p.id));
+    const score = averageScore(p.id);
+    const commission = commissionOn(monthlyNetSales(p.id));
+    return `
+      <div class="agent-perf-card">
+        <div class="agent-perf-head">
+          <h4>${p.full_name}</h4>
+          <span>${s.active} active opportunit${s.active === 1 ? "y" : "ies"}</span>
+        </div>
+        <div class="agent-perf-metrics">
+          <div><div class="num">${s.leads}</div><div class="lbl">leads</div></div>
+          <div><div class="num">${s.pax}</div><div class="lbl">pax</div></div>
+          <div><div class="num">${shortCurrency(s.netSales)}</div><div class="lbl">NSC</div></div>
+          <div><div class="num">${score === null ? "—" : score}</div><div class="lbl">score</div></div>
+          <div style="grid-column: span 2;"><div class="num">${currency(commission)}</div><div class="lbl">commission this month</div></div>
+        </div>
+      </div>`;
+  }).join("");
+}
+
+// ---------- Funnels ----------
+function drawFunnel(targetId, leads) {
+  const grid = document.getElementById(targetId);
+  if (!grid) return;
+  const total = leads.length;
+  grid.innerHTML = FUNNEL_STAGES.map(s => {
+    const count = leads.filter(l => l.journey_stage === s.label).length;
+    const share = total ? Math.round((count / total) * 100) : 0;
+    return `
+      <div class="funnel-step">
+        <div class="step-no">${s.no}</div>
+        <div class="step-count">${count}</div>
+        <div class="step-label">${s.label}</div>
+        <div style="font-size:11px; color:var(--ink-soft); margin-top:4px;">${share}%</div>
+      </div>`;
+  }).join("");
+}
+
+function renderTeamFunnel() {
+  drawFunnel("funnelGrid", leadsInPeriod(allLeadsCache, currentPeriod));
+}
+
+function renderAgentFunnel() {
+  const mine = currentProfile ? allLeadsCache.filter(l => l.agent_id === currentProfile.id) : [];
+  drawFunnel("funnelGridAgent", mine);
+}
+
+// ---------- Urgent Admin Attention ----------
+function renderUrgentAlerts() {
+  const list = document.getElementById("urgentAlertsList");
+  if (!list) return;
+
+  const now = new Date();
+  const overdue = allLeadsCache
+    .filter(l => l.next_followup && new Date(l.next_followup) < now && leadIsActive(l))
+    .sort((a, b) => new Date(a.next_followup) - new Date(b.next_followup));
+
+  if (overdue.length === 0) {
+    list.innerHTML = "<li>No urgent alerts.</li>";
+    return;
+  }
+
+  list.innerHTML = overdue.map(l => `
+    <li class="alert-item">
+      <div class="name">${l.client_full_name || "Unnamed client"}</div>
+      <div class="note">${agentName(l.agent_id).split(" ")[0]}: follow up</div>
+      <div class="overdue">Overdue since ${new Date(l.next_followup).toLocaleString()}</div>
+    </li>`).join("");
+}
+
+// ---------- Leads Tracker ----------
+function filteredLeads() {
+  const leads = [...allLeadsCache];
+  const f = currentLeadFilter;
+  if (f === "all") return leads;
+  if (f === "hot" || f === "warm" || f === "cold") {
+    return leads.filter(l => (l.lead_temperature || "").toLowerCase().includes(f));
+  }
+  if (f === "booked") return leads.filter(leadIsBooked);
+  if (f === "active") return leads.filter(leadIsActive);
+  if (f === "overdue") {
+    const now = new Date();
+    return leads.filter(l => l.next_followup && new Date(l.next_followup) < now && leadIsActive(l));
+  }
+  if (f === "mine" && currentProfile) return leads.filter(l => l.agent_id === currentProfile.id);
+  return leads;
+}
+
+function stageColour(stage) {
+  if (stage === BOOKED_STAGE) return "var(--gold-600)";
+  if (stage === LOST_STAGE) return "var(--ink-soft)";
+  return "var(--navy-900)";
+}
+
+function renderLeadsTable() {
+  const box = document.querySelector("#view-leads .card:last-child");
+  if (!box) return;
+  const countLabel = box.querySelector("span");
+  const empty = box.querySelector(".registry-empty");
+  if (!empty) return;
+
+  // The table gets its own container, so the original empty-state div can
+  // simply be hidden and shown again when a filter returns nothing.
+  let wrap = document.getElementById("leadsTableWrap");
+  if (!wrap) {
+    wrap = document.createElement("div");
+    wrap.id = "leadsTableWrap";
+    wrap.style.overflowX = "auto";
+    wrap.style.marginTop = "8px";
+    empty.parentNode.insertBefore(wrap, empty.nextSibling);
+  }
+
+  const leads = filteredLeads();
+  if (countLabel) countLabel.textContent = leads.length + " record" + (leads.length === 1 ? "" : "s");
+
+  if (leads.length === 0) {
+    wrap.innerHTML = "";
+    empty.style.display = "block";
+    empty.textContent = "No leads match this filter yet. Save a client profile to see it here.";
+    return;
+  }
+  empty.style.display = "none";
+
+  const now = new Date();
+  const th = "padding:10px 12px; text-align:left; font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-soft); border-bottom:1px solid rgba(0,0,0,.08); white-space:nowrap;";
+  const td = "padding:12px; font-size:13px; border-bottom:1px solid rgba(0,0,0,.05); vertical-align:middle;";
+
+  wrap.innerHTML = `
+    <table style="width:100%; border-collapse:collapse; min-width:940px;">
+      <thead>
+        <tr>
+          <th style="${th}">Client</th>
+          <th style="${th}">Package</th>
+          <th style="${th}">Travel date</th>
+          <th style="${th}">Stage</th>
+          <th style="${th}">Consultant</th>
+          <th style="${th} text-align:right;">Deal value</th>
+          <th style="${th} text-align:right;">Paid</th>
+          <th style="${th} text-align:right;">Balance</th>
+          <th style="${th}">Next follow-up</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${leads.map(l => {
+          const paid = leadPaid(l);
+          const value = Number(l.deal_value) || 0;
+          const balance = Math.max(value - paid, 0);
+          const late = l.next_followup && new Date(l.next_followup) < now && leadIsActive(l);
+          return `
+            <tr class="lead-row" data-lead="${l.id}" style="cursor:pointer;">
+              <td style="${td}">
+                <div style="font-weight:600; color:var(--navy-900);">${l.client_full_name || "Unnamed client"}</div>
+                <div style="font-size:11px; color:var(--ink-soft);">${l.client_mobile || l.client_email || "No contact saved"}</div>
+              </td>
+              <td style="${td}">${l.package_destination || "—"}</td>
+              <td style="${td}">${l.travel_date || "—"}</td>
+              <td style="${td}">
+                <span style="display:inline-block; padding:3px 9px; border-radius:999px; font-size:11px; font-weight:600; color:#fff; background:${stageColour(l.journey_stage)};">${l.journey_stage || "—"}</span>
+              </td>
+              <td style="${td}">${agentName(l.agent_id)}</td>
+              <td style="${td} text-align:right;">${currency(value)}</td>
+              <td style="${td} text-align:right;">${currency(paid)}</td>
+              <td style="${td} text-align:right; font-weight:600; color:${balance > 0 ? "var(--navy-900)" : "var(--gold-600)"};">${currency(balance)}</td>
+              <td style="${td} ${late ? "color:#b42318; font-weight:600;" : ""}">${l.next_followup ? new Date(l.next_followup).toLocaleDateString() : "—"}${late ? " · overdue" : ""}</td>
+            </tr>`;
+        }).join("")}
+      </tbody>
+    </table>`;
+
+  // Clicking a row opens that client over in Client's Documents.
+  wrap.querySelectorAll(".lead-row").forEach(row => {
+    row.addEventListener("click", () => {
+      const sel = document.getElementById("voucherClientSelect");
+      if (!sel) return;
+      sel.value = row.dataset.lead;
+      sel.dispatchEvent(new Event("change"));
+      goToView("voucher");
+    });
+  });
+}
+
+// ---------- Client's Documents ----------
 function populateVoucherSelect(leads) {
   const sel = document.getElementById("voucherClientSelect");
   if (!sel) return;
@@ -256,7 +556,6 @@ document.getElementById("voucherClientSelect")?.addEventListener("change", (e) =
   loadClientDocuments(lead.id);
 });
 
-// ---------- Client's Documents: upload + library ----------
 document.getElementById("doc_upload_btn")?.addEventListener("click", async (e) => {
   const btn = e.target;
   if (!currentProfile || !selectedDocClient) return;
@@ -336,7 +635,7 @@ function renderVoucher(l) {
   set("v_freebies", [l.applied_discounts, l.special_freebies].filter(Boolean).join(" · "));
   set("v_requests", l.special_requests);
 
-  const paid = (l.payments || []).reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+  const paid = leadPaid(l);
   const total = Number(l.deal_value) || 0;
   set("v_totalvalue", currency(total));
   set("v_paid", currency(paid));
@@ -352,7 +651,7 @@ function renderVoucher(l) {
   if (docsEl) docsEl.innerHTML = docLinks.length ? docLinks.join(" · ") : "No files attached";
 }
 
-// ---------- Client Profile: payment installment rows (add up to 15, one at a time) ----------
+// ---------- Client Profile: payment installment rows ----------
 let paymentRowCount = 0;
 const MAX_PAYMENT_ROWS = 15;
 
@@ -427,7 +726,6 @@ async function collectPayments() {
   return payments;
 }
 
-// Save the full Client Profile form as a new lead
 async function buildClientProfilePayload() {
   const v = id => document.getElementById(id)?.value || null;
   const bookingFile = document.getElementById("cp_booking_file")?.files?.[0];
@@ -491,6 +789,7 @@ async function saveClientProfile(btn, label, syncToHubspot) {
   }
 
   await loadLeads();
+  renderAll();
 
   if (!syncToHubspot) {
     btn.textContent = "Saved ✓";
@@ -509,37 +808,47 @@ async function saveClientProfile(btn, label, syncToHubspot) {
 document.getElementById("cp_save_draft")?.addEventListener("click", (e) => saveClientProfile(e.target, "Save draft", false));
 document.getElementById("cp_save_sync")?.addEventListener("click", (e) => saveClientProfile(e.target, "Save Client Profile & Sync to HubSpot", true));
 
-// ---------- Funnel ----------
-function renderFunnel(targetId) {
-  const grid = document.getElementById(targetId);
-  grid.innerHTML = "";
-  FUNNEL_STAGES.forEach(s => {
-    const step = document.createElement("div");
-    step.className = "funnel-step";
-    step.innerHTML = `<div class="step-no">${s.no}</div><div class="step-count">0</div><div class="step-label">${s.label}</div>`;
-    grid.appendChild(step);
-  });
+// ---------- Filter pills ----------
+// The pill's own text decides what it filters, so renaming a pill in
+// index.html keeps working without touching this file.
+function pillKey(el) {
+  const explicit = el.dataset.period || el.dataset.filter;
+  if (explicit) return explicit.toLowerCase();
+  const t = (el.textContent || "").trim().toLowerCase();
+  if (t.includes("today")) return "today";
+  if (t.includes("week")) return "week";
+  if (t.includes("month")) return "month";
+  if (t.includes("quarter")) return "quarter";
+  if (t.includes("hot")) return "hot";
+  if (t.includes("warm")) return "warm";
+  if (t.includes("cold")) return "cold";
+  if (t.includes("booked")) return "booked";
+  if (t.includes("overdue")) return "overdue";
+  if (t.includes("active")) return "active";
+  if (t.includes("mine") || t.includes("my ")) return "mine";
+  return "all";
 }
-renderFunnel("funnelGrid");
-renderFunnel("funnelGridAgent");
 
-// ---------- Leads Tracker filter pills ----------
-document.querySelectorAll("#leadPills .pill").forEach(p => {
-  p.addEventListener("click", () => {
-    document.querySelectorAll("#leadPills .pill").forEach(x => x.classList.remove("active"));
-    p.classList.add("active");
-  });
-});
-
-// ---------- Team Dashboard period filter pills ----------
 document.querySelectorAll("#teamPeriodPills .pill").forEach(p => {
   p.addEventListener("click", () => {
     document.querySelectorAll("#teamPeriodPills .pill").forEach(x => x.classList.remove("active"));
     p.classList.add("active");
+    currentPeriod = pillKey(p);
+    renderRanking();
+    renderAgentPerformance();
+    renderTeamFunnel();
   });
 });
 
-// ---------- Compliance Record tab pills ----------
+document.querySelectorAll("#leadPills .pill").forEach(p => {
+  p.addEventListener("click", () => {
+    document.querySelectorAll("#leadPills .pill").forEach(x => x.classList.remove("active"));
+    p.classList.add("active");
+    currentLeadFilter = pillKey(p);
+    renderLeadsTable();
+  });
+});
+
 document.querySelectorAll("#compliancePills .pill").forEach(p => {
   p.addEventListener("click", () => {
     document.querySelectorAll("#compliancePills .pill").forEach(x => x.classList.remove("active"));
@@ -633,10 +942,14 @@ document.getElementById("sc_submit")?.addEventListener("click", async (e) => {
     agent_commitment: v("sc_agent_commitment"),
   });
   btn.textContent = error ? "Error — try again" : "Submitted ✓";
-  if (!error) setTimeout(() => (btn.textContent = "Submit Daily Scorecard"), 1500);
+  if (!error) {
+    await loadScorecards();
+    renderAgentPerformance();
+    setTimeout(() => (btn.textContent = "Submit Daily Scorecard"), 1500);
+  }
 });
 
-// ---------- Approvals: type toggle ----------
+// ---------- Approvals ----------
 document.querySelectorAll("#approvalTypePills .pill").forEach(p => {
   p.addEventListener("click", () => {
     document.querySelectorAll("#approvalTypePills .pill").forEach(x => x.classList.remove("active"));
@@ -726,6 +1039,7 @@ async function loadApprovals() {
       </div>
     </div>`).join("");
 }
+
 (function setDates() {
   const opts = { weekday: "long", year: "numeric", month: "long", day: "numeric" };
   const label = new Date().toLocaleDateString("en-US", opts);
