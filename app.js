@@ -1042,15 +1042,7 @@ function renderAgentDashboard() {
     agentPage = Number(b.dataset.page); renderAgentDashboard();
   }));
   body.querySelectorAll(".agent-open").forEach(b => b.addEventListener("click", () => {
-    const sel = document.getElementById("voucherClientSelect");
-    if (!sel) return;
-    sel.value = b.dataset.lead;
-    sel.dispatchEvent(new Event("change"));
-    goToView("voucher");
-    setTimeout(() => {
-      document.getElementById("voucherCard")
-        ?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 60);
+    openClientProfile(b.dataset.lead);
   }));
 }
 
@@ -1158,6 +1150,224 @@ async function deleteLead(leadId) {
   await loadDocIndex();
   renderAll();
   renderDocResults();
+}
+
+// ---------- Complete Client Profile ----------
+// Opens the full saved record — every field from the Client Profile form,
+// in the same order — rather than the document summary. Built here so
+// index.html needs no changes.
+
+function profileRow(label, value) {
+  const shown = (value === null || value === undefined || value === "" ) ? "—" : value;
+  return `
+    <div>
+      <div style="font-size:11px; letter-spacing:.05em; text-transform:uppercase; color:var(--ink-faint); margin-bottom:3px;">${label}</div>
+      <div style="font-size:13.5px; color:var(--navy-900); font-weight:500; word-break:break-word;">${shown}</div>
+    </div>`;
+}
+
+function profileSection(title, rows, cols = 3) {
+  return `
+    <div style="margin-top:24px;">
+      <div style="font-size:12px; font-weight:700; letter-spacing:.08em; text-transform:uppercase;
+        color:var(--gold-600); padding-bottom:8px; border-bottom:1px solid var(--line); margin-bottom:14px;">${title}</div>
+      <div style="display:grid; grid-template-columns:repeat(${cols}, 1fr); gap:16px 20px;">${rows}</div>
+    </div>`;
+}
+
+function paymentsTable(l) {
+  const payments = l.payments || [];
+  if (payments.length === 0) {
+    return `<div style="font-size:13px; color:var(--ink-faint);">No payments recorded.</div>`;
+  }
+  const th = "padding:8px 10px; text-align:left; font-size:10.5px; letter-spacing:.05em; text-transform:uppercase; color:var(--ink-faint); border-bottom:1px solid var(--line);";
+  const td = "padding:10px; font-size:13px; border-bottom:1px solid rgba(0,0,0,.05); color:var(--navy-900);";
+  return `
+    <table style="width:100%; border-collapse:collapse;">
+      <thead><tr>
+        <th style="${th}">#</th><th style="${th}">Date</th>
+        <th style="${th} text-align:right;">Amount</th>
+        <th style="${th}">Method</th><th style="${th}">Receipt</th>
+      </tr></thead>
+      <tbody>
+        ${payments.map((p, i) => `
+          <tr>
+            <td style="${td}">${String(i + 1).padStart(2, "0")}</td>
+            <td style="${td}">${p.date ? fmtDate(p.date) : "—"}</td>
+            <td style="${td} text-align:right; font-weight:600;">${currency(p.amount)}</td>
+            <td style="${td}">${p.method || "—"}</td>
+            <td style="${td}">${p.receipt_path
+              ? `<a href="#" onclick="viewDocument('${p.receipt_path}'); return false;" style="color:var(--gold-600); font-weight:600;">View</a>`
+              : '<span style="color:var(--ink-faint);">None</span>'}</td>
+          </tr>`).join("")}
+      </tbody>
+    </table>`;
+}
+
+function openClientProfile(leadId) {
+  const l = allLeadsCache.find(x => x.id === leadId);
+  if (!l) return;
+
+  const paid = leadPaid(l);
+  const value = Number(l.deal_value) || 0;
+  const balance = Math.max(value - paid, 0);
+  const docs = docCount(l.id);
+
+  let overlay = document.getElementById("profileOverlay");
+  if (!overlay) {
+    overlay = document.createElement("div");
+    overlay.id = "profileOverlay";
+    overlay.style.cssText = `position:fixed; inset:0; background:rgba(8,18,38,.55); z-index:9999;
+      display:flex; align-items:flex-start; justify-content:center; overflow-y:auto; padding:32px 20px;`;
+    document.body.appendChild(overlay);
+    // Clicking the dark area or pressing Escape closes it.
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) closeClientProfile(); });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeClientProfile(); });
+  }
+
+  overlay.innerHTML = `
+    <div style="background:#fff; border-radius:16px; max-width:1080px; width:100%; padding:28px 30px 34px;
+      box-shadow:0 24px 60px rgba(0,0,0,.3);">
+
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px;">
+        <div>
+          <div style="font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--gold-600); font-weight:700;">Client Profile</div>
+          <h2 style="margin:4px 0 6px; font-size:24px; color:var(--navy-900); letter-spacing:-.02em;">${l.client_full_name || "Unnamed client"}</h2>
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <span style="display:inline-block; padding:4px 11px; border-radius:999px; font-size:11px; font-weight:700;
+              color:#fff; background:${stageColour(l.journey_stage)};">${l.journey_stage || "No stage"}</span>
+            <span style="font-size:12.5px; color:var(--ink-soft);">${l.package_destination || "No package"}</span>
+            <span style="font-size:12.5px; color:var(--ink-faint);">· ${agentName(l.agent_id)}</span>
+          </div>
+        </div>
+        <button type="button" id="profileClose"
+          style="border:1px solid var(--line); background:#fff; border-radius:8px; padding:8px 14px;
+          font-size:13px; font-weight:700; color:var(--navy-900); cursor:pointer; font-family:inherit;">Close ✕</button>
+      </div>
+
+      <div style="display:flex; gap:12px; margin-top:18px; flex-wrap:wrap;">
+        <div style="flex:1; min-width:150px; background:#f4f6fa; border-radius:10px; padding:12px 14px;">
+          <div style="font-size:11px; color:var(--ink-soft);">Deal value</div>
+          <div style="font-size:19px; font-weight:800; color:var(--navy-900);">${currency(value)}</div>
+        </div>
+        <div style="flex:1; min-width:150px; background:#f4f6fa; border-radius:10px; padding:12px 14px;">
+          <div style="font-size:11px; color:var(--ink-soft);">Paid</div>
+          <div style="font-size:19px; font-weight:800; color:#2e8b57;">${currency(paid)}</div>
+        </div>
+        <div style="flex:1; min-width:150px; background:#f4f6fa; border-radius:10px; padding:12px 14px;">
+          <div style="font-size:11px; color:var(--ink-soft);">Balance due</div>
+          <div style="font-size:19px; font-weight:800; color:${balance > 0 ? "var(--navy-900)" : "var(--gold-600)"};">${currency(balance)}</div>
+        </div>
+        <div style="flex:1; min-width:150px; background:#f4f6fa; border-radius:10px; padding:12px 14px;">
+          <div style="font-size:11px; color:var(--ink-soft);">Documents</div>
+          <div style="font-size:19px; font-weight:800; color:var(--navy-900);">${docs}</div>
+        </div>
+      </div>
+
+      ${profileSection("Client information", [
+        profileRow("Full name", l.client_full_name),
+        profileRow("Email", l.client_email),
+        profileRow("Mobile number", l.client_mobile),
+        profileRow("Date of inquiry", l.inquiry_date ? fmtDate(l.inquiry_date) : null),
+        profileRow("Time of inquiry", l.inquiry_time),
+        profileRow("Assigned consultant", agentName(l.assigned_consultant || l.agent_id)),
+      ].join(""))}
+
+      ${profileSection("Emergency contact & address", [
+        profileRow("Emergency contact name", l.emergency_contact_name),
+        profileRow("Emergency contact number", l.emergency_contact_phone),
+        profileRow("Physical address", l.client_address),
+      ].join(""))}
+
+      ${profileSection("Travel profile", [
+        profileRow("Package / Destination", l.package_destination),
+        profileRow("Preferred travel date", l.travel_date ? fmtDate(l.travel_date) : null),
+        profileRow("Number of travelers", l.travelers),
+        profileRow("Visa status", l.visa_status),
+        profileRow("Lead source", l.lead_source),
+        profileRow("Estimated deal value", currency(l.deal_value)),
+      ].join(""))}
+
+      ${profileSection("Sales journey & closing strategy", [
+        profileRow("Journey stage", l.journey_stage),
+        profileRow("Lead temperature", l.lead_temperature),
+        profileRow("Decision status", l.decision_status),
+        profileRow("Next follow-up", l.next_followup ? new Date(l.next_followup).toLocaleString() : null),
+      ].join(""))}
+      <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px 20px; margin-top:16px;">
+        ${profileRow("Client concern / buying signal", l.concern)}
+        ${profileRow("Next closing strategy", l.closing_strategy)}
+        ${profileRow("Remarks", l.remarks)}
+      </div>
+
+      ${profileSection("Booking & payments", [
+        profileRow("Booking reference", l.booking_reference),
+        profileRow("Booking confirmation", l.booking_confirmation_path
+          ? `<a href="#" onclick="viewDocument('${l.booking_confirmation_path}'); return false;" style="color:var(--gold-600); font-weight:700;">View file</a>`
+          : null),
+        profileRow("Payments recorded", (l.payments || []).length),
+      ].join(""))}
+      <div style="margin-top:14px;">${paymentsTable(l)}</div>
+
+      ${profileSection("Visa service, discounts & considerations", [
+        profileRow("Visa service availed", l.visa_service_availed),
+        profileRow("Visa service fee", currency(l.visa_service_fee)),
+        profileRow("Visa service discount", currency(l.visa_service_discount)),
+        profileRow("Applied package discounts", l.applied_discounts),
+        profileRow("Special freebies", l.special_freebies),
+        profileRow("Special client requests", l.special_requests),
+      ].join(""))}
+
+      ${profileSection("Traveler preferences & optional services", [
+        profileRow("Preferred airline", l.preferred_airline),
+        profileRow("Seat preference", l.seat_preference),
+        profileRow("Meal preference / allergy", l.meal_preference),
+        profileRow("Room preference", l.room_preference),
+        profileRow("Traveler preferences", l.traveler_preferences),
+        profileRow("Optional tours", l.optional_tours),
+        profileRow("Optional services", l.optional_services),
+      ].join(""))}
+
+      ${profileSection("Record history", [
+        profileRow("Owned by", agentName(l.agent_id)),
+        profileRow("Entered by", l.created_by ? agentName(l.created_by) : "—"),
+        profileRow("Created", l.created_at ? new Date(l.created_at).toLocaleString() : null),
+        profileRow("Last updated", l.updated_at ? new Date(l.updated_at).toLocaleString() : null),
+      ].join(""), 4)}
+
+      <div style="display:flex; gap:10px; margin-top:26px; padding-top:18px; border-top:1px solid var(--line);">
+        <button type="button" id="profileDocs"
+          style="padding:10px 18px; border:none; border-radius:8px; background:var(--navy-900); color:#fff;
+          font-size:13px; font-weight:700; cursor:pointer; font-family:inherit;">
+          Documents${docs ? ` (${docs})` : ""} & upload</button>
+        <button type="button" id="profileClose2"
+          style="padding:10px 18px; border:1px solid var(--line); border-radius:8px; background:#fff;
+          font-size:13px; font-weight:700; color:var(--navy-900); cursor:pointer; font-family:inherit;">Close</button>
+      </div>
+    </div>`;
+
+  overlay.style.display = "flex";
+  document.body.style.overflow = "hidden";
+
+  document.getElementById("profileClose").onclick = closeClientProfile;
+  document.getElementById("profileClose2").onclick = closeClientProfile;
+  document.getElementById("profileDocs").onclick = () => {
+    closeClientProfile();
+    const sel = document.getElementById("voucherClientSelect");
+    if (!sel) return;
+    sel.value = leadId;
+    sel.dispatchEvent(new Event("change"));
+    goToView("voucher");
+    setTimeout(() => {
+      document.getElementById("voucherCard")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 60);
+  };
+}
+
+function closeClientProfile() {
+  const overlay = document.getElementById("profileOverlay");
+  if (overlay) overlay.style.display = "none";
+  document.body.style.overflow = "";
 }
 
 // ---------- Urgent Admin Attention ----------
@@ -1447,17 +1657,7 @@ function renderLeadsTable() {
   });
 
   wrap.querySelectorAll(".lead-open").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const sel = document.getElementById("voucherClientSelect");
-      if (!sel) return;
-      sel.value = btn.dataset.lead;
-      sel.dispatchEvent(new Event("change"));
-      goToView("voucher");
-      setTimeout(() => {
-        document.getElementById("voucherCard")
-          ?.scrollIntoView({ behavior: "smooth", block: "start" });
-      }, 60);
-    });
+    btn.addEventListener("click", () => openClientProfile(btn.dataset.lead));
   });
 
   wrap.querySelectorAll(".lead-delete").forEach(btn => {
@@ -1802,7 +2002,7 @@ function renderVoucher(l) {
 let paymentRowCount = 0;
 const MAX_PAYMENT_ROWS = 15;
 
-function addPaymentRow() {
+function addPaymentRow(saved) {
   if (paymentRowCount >= MAX_PAYMENT_ROWS) return;
   paymentRowCount++;
   const i = paymentRowCount;
@@ -1811,32 +2011,48 @@ function addPaymentRow() {
   const row = document.createElement("div");
   row.className = "rank-row";
   row.style.alignItems = "flex-end";
+  const methods = ["Bank transfer", "Credit card", "Cash", "GCash"];
   row.innerHTML = `
     <div class="rank-badge">${String(i).padStart(2, "0")}</div>
-    <div class="form-field" style="flex:1;"><label>Payment date</label><input type="date" class="pay-date" data-idx="${i}"></div>
-    <div class="form-field" style="flex:1;"><label>Amount</label><input type="number" class="pay-amount" data-idx="${i}" value="0"></div>
+    <div class="form-field" style="flex:1;"><label>Payment date</label>
+      <input type="date" class="pay-date" data-idx="${i}" value="${saved?.date || ""}"></div>
+    <div class="form-field" style="flex:1;"><label>Amount</label>
+      <input type="number" class="pay-amount" data-idx="${i}" value="${Number(saved?.amount) || 0}"></div>
     <div class="form-field" style="flex:1;">
       <label>Payment method</label>
       <select class="pay-method" data-idx="${i}">
-        <option value="">Select</option><option>Bank transfer</option><option>Credit card</option><option>Cash</option><option>GCash</option>
+        <option value="">Select</option>
+        ${methods.map(m => `<option ${saved?.method === m ? "selected" : ""}>${m}</option>`).join("")}
       </select>
     </div>
-    <div class="form-field" style="flex:1;"><label>Receipt / deposit slip</label><input type="file" class="pay-receipt" data-idx="${i}"></div>`;
+    <div class="form-field" style="flex:1;">
+      <label>Receipt / deposit slip</label>
+      <input type="file" class="pay-receipt" data-idx="${i}" data-existing="${saved?.receipt_path || ""}">
+      ${saved?.receipt_path
+        ? `<a href="#" onclick="viewDocument('${saved.receipt_path}'); return false;"
+             style="font-size:11px; color:var(--gold-600); font-weight:600;">View current receipt</a>`
+        : ""}
+    </div>`;
   wrap.appendChild(row);
 
   const btn = document.getElementById("addPaymentBtn");
   if (btn) btn.style.display = paymentRowCount >= MAX_PAYMENT_ROWS ? "none" : "inline-block";
 }
 
-function renderPaymentRows() {
+function renderPaymentRows(payments) {
   const wrap = document.getElementById("paymentRows");
   if (!wrap) return;
   wrap.innerHTML = "";
   paymentRowCount = 0;
-  addPaymentRow(); // start with just one row visible
+  const list = (payments || []).filter(Boolean);
+  if (list.length === 0) {
+    addPaymentRow(); // a new client starts with one blank row
+  } else {
+    list.forEach(p => addPaymentRow(p));
+  }
 }
 
-document.getElementById("addPaymentBtn")?.addEventListener("click", addPaymentRow);
+document.getElementById("addPaymentBtn")?.addEventListener("click", () => addPaymentRow());
 renderPaymentRows();
 
 const DOCS_BUCKET = "client-documents";
