@@ -248,7 +248,7 @@ document.getElementById("loginBtn").addEventListener("click", async () => {
 async function loadProfileAndEnter(userId) {
   const { data: profile, error } = await supabaseClient
     .from("profiles")
-    .select("id, full_name, role")
+    .select("id, full_name, role, rank, can_delete_leads")
     .eq("id", userId)
     .single();
 
@@ -446,7 +446,7 @@ function goToView(view) {
 async function loadProfiles() {
   const { data, error } = await supabaseClient
     .from("profiles")
-    .select("id, full_name, role, rank")
+    .select("id, full_name, role, rank, can_delete_leads")
     .order("full_name");
   if (!error && data) allProfilesCache = data;
 
@@ -955,7 +955,7 @@ function renderAgentDashboard() {
           <div style="display:flex; gap:8px; align-items:center;">
             <input id="agentSearchInput" type="search" placeholder="Search leads…" value="${agentSearch.replace(/"/g, "&quot;")}"
               style="padding:8px 13px; border:1px solid var(--line); border-radius:8px; font-size:13px; font-family:inherit; min-width:190px;">
-            <button id="agentExportBtn" class="pill" type="button">↓ Export</button>
+            <button id="agentExportBtn" class="pill" type="button">↓ Export to Excel</button>
             <button id="agentNewLeadBtn" type="button" style="padding:8px 15px; border:none; border-radius:8px;
               background:var(--navy-900); color:#fff; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit;">+ New Lead</button>
           </div>
@@ -1037,7 +1037,8 @@ function renderAgentDashboard() {
     if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
   });
   document.getElementById("agentNewLeadBtn")?.addEventListener("click", () => goToView("client"));
-  document.getElementById("agentExportBtn")?.addEventListener("click", exportLeadsCsv);
+  document.getElementById("agentExportBtn")?.addEventListener("click", (e) =>
+    exportLeadsExcel(tableLeads, who ? who.full_name : "My leads", e.target));
   body.querySelectorAll(".agent-page").forEach(b => b.addEventListener("click", () => {
     agentPage = Number(b.dataset.page); renderAgentDashboard();
   }));
@@ -1096,6 +1097,9 @@ function wireResources() {
 // Deleting removes the client, their documents and their payment history,
 // so the confirmation asks for the name to be typed rather than a lazy OK.
 async function deleteLead(leadId) {
+  // The button is hidden for everyone else, but a hidden button is not a
+  // lock — check here too. The database is the third and final check.
+  if (!currentProfile?.can_delete_leads) return;
   const lead = allLeadsCache.find(l => l.id === leadId);
   if (!lead) return;
 
@@ -1336,6 +1340,10 @@ function openClientProfile(leadId) {
       ].join(""), 4)}
 
       <div style="display:flex; gap:10px; margin-top:26px; padding-top:18px; border-top:1px solid var(--line);">
+        ${canEditLead(l) ? `
+          <button type="button" id="profileEdit"
+            style="padding:10px 18px; border:none; border-radius:8px; background:var(--gold-600); color:#fff;
+            font-size:13px; font-weight:700; cursor:pointer; font-family:inherit;">Edit profile</button>` : ""}
         <button type="button" id="profileDocs"
           style="padding:10px 18px; border:none; border-radius:8px; background:var(--navy-900); color:#fff;
           font-size:13px; font-weight:700; cursor:pointer; font-family:inherit;">
@@ -1351,6 +1359,8 @@ function openClientProfile(leadId) {
 
   document.getElementById("profileClose").onclick = closeClientProfile;
   document.getElementById("profileClose2").onclick = closeClientProfile;
+  const editBtn = document.getElementById("profileEdit");
+  if (editBtn) editBtn.onclick = () => editClientProfile(leadId);
   document.getElementById("profileDocs").onclick = () => {
     closeClientProfile();
     const sel = document.getElementById("voucherClientSelect");
@@ -1368,6 +1378,291 @@ function closeClientProfile() {
   const overlay = document.getElementById("profileOverlay");
   if (overlay) overlay.style.display = "none";
   document.body.style.overflow = "";
+}
+
+// ---------- Editing a client profile ----------
+// An agent may correct their own client; admins and sales admins may correct
+// anyone's. The database enforces the same rule, so a blocked edit fails
+// rather than silently doing nothing.
+function canEditLead(l) {
+  if (!currentProfile) return false;
+  if (currentProfile.role !== "agent") return true;
+  return l.agent_id === currentProfile.id;
+}
+
+const STAGE_OPTIONS = [
+  "New Inquiry", "Discovery & Qualification", "Solution Presented",
+  "Decision in Progress", "Strategic Nurturing", "Reservation / Payment Processing",
+  "Successfully Booked", "Lost Opportunity",
+];
+const TEMP_OPTIONS = [
+  "Hot – likely to close within 7 days",
+  "Warm – engaged, needs nurturing",
+  "Cold – early stage, low urgency",
+];
+const DECISION_OPTIONS = ["Ready to reserve", "Comparing options", "Awaiting approval", "On hold"];
+const VISA_OPTIONS = ["Not yet applied", "In progress", "Approved", "Not required"];
+const SOURCE_OPTIONS = ["Facebook", "Instagram", "Referral", "Walk-in", "Website"];
+const METHOD_OPTIONS = ["Bank transfer", "Credit card", "Cash", "GCash"];
+
+function editField(label, id, value, type = "text") {
+  return `
+    <div>
+      <label style="display:block; font-size:11px; letter-spacing:.05em; text-transform:uppercase;
+        color:var(--ink-faint); margin-bottom:4px;">${label}</label>
+      <input type="${type}" id="${id}" value="${value === null || value === undefined ? "" : String(value).replace(/"/g, "&quot;")}"
+        style="width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:7px;
+        font-size:13.5px; font-family:inherit; color:var(--navy-900);">
+    </div>`;
+}
+
+function editArea(label, id, value) {
+  return `
+    <div style="grid-column:1 / -1;">
+      <label style="display:block; font-size:11px; letter-spacing:.05em; text-transform:uppercase;
+        color:var(--ink-faint); margin-bottom:4px;">${label}</label>
+      <textarea id="${id}" rows="2"
+        style="width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:7px;
+        font-size:13.5px; font-family:inherit; color:var(--navy-900); resize:vertical;">${value || ""}</textarea>
+    </div>`;
+}
+
+function editSelect(label, id, value, options) {
+  return `
+    <div>
+      <label style="display:block; font-size:11px; letter-spacing:.05em; text-transform:uppercase;
+        color:var(--ink-faint); margin-bottom:4px;">${label}</label>
+      <select id="${id}" style="width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:7px;
+        font-size:13.5px; font-family:inherit; background:#fff; color:var(--navy-900);">
+        ${options.map(o => `<option ${o === value ? "selected" : ""}>${o}</option>`).join("")}
+      </select>
+    </div>`;
+}
+
+function editGroup(title, inner, cols = 3) {
+  return `
+    <div style="margin-top:22px;">
+      <div style="font-size:12px; font-weight:700; letter-spacing:.08em; text-transform:uppercase;
+        color:var(--gold-600); padding-bottom:8px; border-bottom:1px solid var(--line); margin-bottom:14px;">${title}</div>
+      <div style="display:grid; grid-template-columns:repeat(${cols}, 1fr); gap:14px 18px;">${inner}</div>
+    </div>`;
+}
+
+// Receipts and booking files are left exactly as they are. Editing text
+// fields must never silently drop an uploaded receipt.
+function editPaymentRows(payments) {
+  const rows = (payments || []);
+  if (rows.length === 0) return '<div style="font-size:13px; color:var(--ink-faint);">No payments recorded. Add them from the Client Profile screen.</div>';
+  return rows.map((p, i) => `
+    <div style="display:grid; grid-template-columns:34px 1fr 1fr 1fr auto; gap:10px; align-items:end; margin-bottom:10px;">
+      <div style="font-size:12px; font-weight:700; color:var(--ink-faint); padding-bottom:9px;">${String(i + 1).padStart(2, "0")}</div>
+      ${editField("Date", `ep_date_${i}`, p.date, "date")}
+      ${editField("Amount", `ep_amt_${i}`, Number(p.amount) || 0, "number")}
+      ${editSelect("Method", `ep_method_${i}`, p.method || "", ["", ...METHOD_OPTIONS])}
+      <div style="padding-bottom:9px; font-size:11px;">
+        ${p.receipt_path
+          ? `<a href="#" onclick="viewDocument('${p.receipt_path}'); return false;" style="color:var(--gold-600); font-weight:600;">Receipt</a>`
+          : '<span style="color:var(--ink-faint);">No receipt</span>'}
+      </div>
+    </div>`).join("");
+}
+
+function editClientProfile(leadId) {
+  const l = allLeadsCache.find(x => x.id === leadId);
+  if (!l || !canEditLead(l)) return;
+
+  const overlay = document.getElementById("profileOverlay");
+  if (!overlay) return;
+
+  const canReassign = currentProfile.role !== "agent";
+  const consultants = allProfilesCache
+    .map(p => `<option value="${p.id}" ${p.id === l.agent_id ? "selected" : ""}>${p.full_name}</option>`).join("");
+
+  overlay.innerHTML = `
+    <div style="background:#fff; border-radius:16px; max-width:1080px; width:100%; padding:28px 30px 34px;
+      box-shadow:0 24px 60px rgba(0,0,0,.3);">
+
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px;">
+        <div>
+          <div style="font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--gold-600); font-weight:700;">Editing</div>
+          <h2 style="margin:4px 0 6px; font-size:24px; color:var(--navy-900); letter-spacing:-.02em;">${l.client_full_name || "Unnamed client"}</h2>
+        </div>
+        <button type="button" id="editCancelX" style="background:none; border:none; font-size:24px;
+          color:var(--ink-faint); cursor:pointer; line-height:1;">&times;</button>
+      </div>
+
+      <div id="editError" style="display:none; margin-top:12px; padding:10px 12px; background:#fdecea;
+        border:1px solid #b42318; border-radius:8px; font-size:13px; color:#b42318;"></div>
+
+      ${editGroup("Client information",
+        editField("Full name", "e_fullname", l.client_full_name) +
+        editField("Email", "e_email", l.client_email, "email") +
+        editField("Mobile number", "e_mobile", l.client_mobile) +
+        editField("Date of inquiry", "e_inquiry_date", l.inquiry_date, "date") +
+        editField("Time of inquiry", "e_inquiry_time", l.inquiry_time, "time") +
+        `<div>
+          <label style="display:block; font-size:11px; letter-spacing:.05em; text-transform:uppercase;
+            color:var(--ink-faint); margin-bottom:4px;">Assigned consultant${canReassign ? "" : " (locked)"}</label>
+          <select id="e_consultant" ${canReassign ? "" : "disabled"}
+            style="width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:7px;
+            font-size:13.5px; font-family:inherit; background:${canReassign ? "#fff" : "#f4f6fa"}; color:var(--navy-900);">
+            ${consultants}
+          </select>
+        </div>`)}
+
+      ${editGroup("Emergency contact & address",
+        editField("Emergency contact name", "e_emg_name", l.emergency_contact_name) +
+        editField("Emergency contact number", "e_emg_phone", l.emergency_contact_phone) +
+        `<div></div>` +
+        editArea("Physical address", "e_address", l.client_address))}
+
+      ${editGroup("Travel profile",
+        editField("Package / Destination", "e_destination", l.package_destination) +
+        editField("Preferred travel date", "e_travel_date", l.travel_date, "date") +
+        editField("Number of travelers", "e_travelers", Number(l.travelers) || 1, "number") +
+        editSelect("Visa status", "e_visa_status", l.visa_status, VISA_OPTIONS) +
+        editSelect("Lead source", "e_lead_source", l.lead_source, SOURCE_OPTIONS) +
+        editField("Estimated deal value", "e_deal_value", Number(l.deal_value) || 0, "number"))}
+
+      ${editGroup("Sales journey & closing strategy",
+        editSelect("Journey stage", "e_stage", l.journey_stage, STAGE_OPTIONS) +
+        editSelect("Lead temperature", "e_temperature", l.lead_temperature, TEMP_OPTIONS) +
+        editSelect("Decision status", "e_decision", l.decision_status, DECISION_OPTIONS) +
+        editField("Next follow-up", "e_followup", l.next_followup ? String(l.next_followup).slice(0, 16) : "", "datetime-local") +
+        `<div></div><div></div>` +
+        editArea("Client concern / buying signal", "e_concern", l.concern) +
+        editArea("Next closing strategy", "e_strategy", l.closing_strategy) +
+        editArea("Remarks", "e_remarks", l.remarks))}
+
+      ${editGroup("Booking & payments",
+        editField("Booking reference", "e_booking_ref", l.booking_reference) + `<div></div><div></div>`)}
+      <div style="margin-top:10px;">${editPaymentRows(l.payments)}</div>
+      <div style="font-size:11.5px; color:var(--ink-faint); margin-top:8px;">
+        Receipts and the booking confirmation stay as they are — upload new files from Client's Documents.
+      </div>
+
+      ${editGroup("Visa service, discounts & considerations",
+        editSelect("Visa service availed", "e_visa_availed", l.visa_service_availed, ["No", "Yes"]) +
+        editField("Visa service fee", "e_visa_fee", Number(l.visa_service_fee) || 0, "number") +
+        editField("Visa service discount", "e_visa_discount", Number(l.visa_service_discount) || 0, "number") +
+        editArea("Applied package discounts", "e_discounts", l.applied_discounts) +
+        editArea("Special freebies", "e_freebies", l.special_freebies) +
+        editArea("Special client requests", "e_requests", l.special_requests))}
+
+      ${editGroup("Traveler preferences & optional services",
+        editField("Preferred airline", "e_airline", l.preferred_airline) +
+        editField("Seat preference", "e_seat", l.seat_preference) +
+        editField("Meal preference / allergy", "e_meal", l.meal_preference) +
+        editField("Room preference", "e_room", l.room_preference) +
+        `<div></div><div></div>` +
+        editArea("Traveler preferences", "e_preferences", l.traveler_preferences) +
+        editArea("Optional tours", "e_tours", l.optional_tours) +
+        editArea("Optional services", "e_services", l.optional_services))}
+
+      <div style="display:flex; gap:10px; margin-top:26px; padding-top:18px; border-top:1px solid var(--line);">
+        <button type="button" id="editSave"
+          style="padding:10px 20px; border:none; border-radius:8px; background:var(--navy-900); color:#fff;
+          font-size:13px; font-weight:700; cursor:pointer; font-family:inherit;">Save changes</button>
+        <button type="button" id="editCancel"
+          style="padding:10px 18px; border:1px solid var(--line); border-radius:8px; background:#fff;
+          font-size:13px; font-weight:700; color:var(--navy-900); cursor:pointer; font-family:inherit;">Cancel</button>
+      </div>
+    </div>`;
+
+  overlay.scrollTop = 0;
+  const back = () => openClientProfile(leadId);
+  document.getElementById("editCancel").onclick = back;
+  document.getElementById("editCancelX").onclick = back;
+  document.getElementById("editSave").onclick = () => saveProfileEdits(leadId);
+}
+
+async function saveProfileEdits(leadId) {
+  const lead = allLeadsCache.find(x => x.id === leadId);
+  if (!lead || !canEditLead(lead)) return;
+
+  const btn = document.getElementById("editSave");
+  const err = document.getElementById("editError");
+  const v = id => { const el = document.getElementById(id); return el && el.value !== "" ? el.value : null; };
+  const num = id => Number(document.getElementById(id)?.value) || 0;
+
+  const name = v("e_fullname");
+  if (!name) {
+    err.textContent = "A client needs a name.";
+    err.style.display = "block";
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = "Saving…";
+  err.style.display = "none";
+
+  // Rebuild payments from the rows on screen, carrying each receipt path
+  // across untouched — those files aren't re-uploaded here.
+  const payments = (lead.payments || []).map((p, i) => ({
+    date: document.getElementById(`ep_date_${i}`)?.value || null,
+    amount: Number(document.getElementById(`ep_amt_${i}`)?.value) || 0,
+    method: document.getElementById(`ep_method_${i}`)?.value || null,
+    receipt_path: p.receipt_path ?? null,
+  }));
+
+  const owner = document.getElementById("e_consultant")?.value || lead.agent_id;
+
+  const patch = {
+    client_full_name: name,
+    client_email: v("e_email"),
+    client_mobile: v("e_mobile"),
+    inquiry_date: v("e_inquiry_date"),
+    inquiry_time: v("e_inquiry_time"),
+    agent_id: owner,
+    assigned_consultant: owner,
+    emergency_contact_name: v("e_emg_name"),
+    emergency_contact_phone: v("e_emg_phone"),
+    client_address: v("e_address"),
+    package_destination: v("e_destination"),
+    travel_date: v("e_travel_date"),
+    travelers: Number(document.getElementById("e_travelers")?.value) || 1,
+    visa_status: v("e_visa_status"),
+    lead_source: v("e_lead_source"),
+    deal_value: num("e_deal_value"),
+    journey_stage: v("e_stage"),
+    lead_temperature: v("e_temperature"),
+    decision_status: v("e_decision"),
+    next_followup: v("e_followup"),
+    concern: v("e_concern"),
+    closing_strategy: v("e_strategy"),
+    remarks: v("e_remarks"),
+    booking_reference: v("e_booking_ref"),
+    payments,
+    visa_service_availed: v("e_visa_availed"),
+    visa_service_fee: num("e_visa_fee"),
+    visa_service_discount: num("e_visa_discount"),
+    applied_discounts: v("e_discounts"),
+    special_freebies: v("e_freebies"),
+    special_requests: v("e_requests"),
+    preferred_airline: v("e_airline"),
+    seat_preference: v("e_seat"),
+    meal_preference: v("e_meal"),
+    room_preference: v("e_room"),
+    traveler_preferences: v("e_preferences"),
+    optional_tours: v("e_tours"),
+    optional_services: v("e_services"),
+  };
+
+  // UPDATE, pinned to this one row. Never an insert — that would duplicate
+  // the client instead of correcting them.
+  const { error } = await supabaseClient.from("leads").update(patch).eq("id", leadId);
+
+  if (error) {
+    err.textContent = "Couldn't save — " + error.message;
+    err.style.display = "block";
+    btn.disabled = false;
+    btn.textContent = "Save changes";
+    return;
+  }
+
+  await loadLeads();
+  renderAll();
+  openClientProfile(leadId);   // back to the read-only view, now updated
 }
 
 // ---------- Urgent Admin Attention ----------
@@ -1446,26 +1741,89 @@ function fmtDate(value) {
   return isNaN(d) ? "—" : d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
-function exportLeadsCsv() {
-  const rows = filteredLeads();
-  const head = ["Date of inquiry", "Client's name", "Travel date", "No. of persons", "Contact no.", "Agent", "Package", "Stage", "Deal value", "Paid", "Balance"];
-  const esc = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
-  const body = rows.map(l => {
-    const paid = leadPaid(l);
-    const value = Number(l.deal_value) || 0;
-    return [
-      fmtDate(l.inquiry_date || l.created_at), l.client_full_name, fmtDate(l.travel_date),
-      Number(l.travelers) || 0, l.client_mobile, agentName(l.agent_id),
-      l.package_destination, l.journey_stage, value, paid, Math.max(value - paid, 0),
-    ].map(esc).join(",");
-  });
-  const csv = [head.map(esc).join(","), ...body].join("\n");
-  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `discover-group-leads-${new Date().toISOString().slice(0, 10)}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
+// ---------- Exporting to Excel ----------
+// SheetJS is fetched only when someone actually exports, so it costs nothing
+// on a normal page load.
+let xlsxLoading = null;
+function loadXlsx() {
+  if (window.XLSX) return Promise.resolve(window.XLSX);
+  if (!xlsxLoading) {
+    xlsxLoading = new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";
+      s.onload = () => resolve(window.XLSX);
+      s.onerror = () => { xlsxLoading = null; reject(new Error("no library")); };
+      document.head.appendChild(s);
+    });
+  }
+  return xlsxLoading;
+}
+
+function leadToRow(l) {
+  const paid = leadPaid(l);
+  const value = Number(l.deal_value) || 0;
+  return {
+    "Date of inquiry": fmtDate(l.inquiry_date || l.created_at),
+    "Client's name": l.client_full_name || "",
+    "Travel date": l.travel_date ? fmtDate(l.travel_date) : "",
+    // Kept as real numbers, not text, so Excel can total the columns.
+    "No. of persons": Number(l.travelers) || 0,
+    "Contact no.": l.client_mobile || "",
+    "Email": l.client_email || "",
+    "Agent": agentName(l.agent_id),
+    "Package": l.package_destination || "",
+    "Stage": l.journey_stage || "",
+    "Lead temperature": l.lead_temperature || "",
+    "Deal value": value,
+    "Paid": paid,
+    "Balance": Math.max(value - paid, 0),
+    "Next follow-up": l.next_followup ? fmtDate(l.next_followup) : "",
+    "Booking reference": l.booking_reference || "",
+  };
+}
+
+function slug(s) {
+  return String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+async function exportLeadsExcel(rows, label, btn) {
+  const original = btn ? btn.textContent : null;
+  if (btn) { btn.disabled = true; btn.textContent = "Preparing…"; }
+
+  try {
+    const XLSX = await loadXlsx();
+    if (rows.length === 0) {
+      if (btn) { btn.textContent = "Nothing to export"; setTimeout(() => { btn.disabled = false; btn.textContent = original; }, 1600); }
+      return;
+    }
+
+    const data = rows.map(leadToRow);
+    const ws = XLSX.utils.json_to_sheet(data);
+    ws["!cols"] = [
+      { wch: 14 }, { wch: 26 }, { wch: 14 }, { wch: 13 }, { wch: 16 }, { wch: 26 },
+      { wch: 22 }, { wch: 20 }, { wch: 26 }, { wch: 30 }, { wch: 13 }, { wch: 13 },
+      { wch: 13 }, { wch: 14 }, { wch: 18 },
+    ];
+    ws["!autofilter"] = { ref: ws["!ref"] };
+
+    const wb = XLSX.utils.book_new();
+    // Sheet names can't exceed 31 characters or Excel refuses to open it.
+    XLSX.utils.book_append_sheet(wb, ws, String(label || "Leads").slice(0, 31));
+    XLSX.writeFile(wb, `discover-group-leads-${slug(label) || "all"}-${new Date().toISOString().slice(0, 10)}.xlsx`);
+
+    if (btn) { btn.textContent = `Exported ${rows.length}`; setTimeout(() => { btn.disabled = false; btn.textContent = original; }, 1600); }
+  } catch (e) {
+    // Offline, or the CDN is blocked — say so rather than fail silently.
+    if (btn) { btn.textContent = "Export failed"; setTimeout(() => { btn.disabled = false; btn.textContent = original; }, 2200); }
+    console.error("Excel export failed:", e);
+  }
+}
+
+// Exports exactly what the Leads Tracker is showing — consultant filter,
+// date range and search all included.
+function exportTrackerExcel(btn) {
+  const label = leadAgentFilter === "all" ? "All consultants" : agentName(leadAgentFilter);
+  exportLeadsExcel(filteredLeads(), label, btn);
 }
 
 // The search box, consultant filter and Export button aren't in index.html,
@@ -1489,7 +1847,7 @@ function ensureLeadsControls(box) {
         font-size:13px; font-family:inherit; background:#fff; color:var(--navy-900); display:none;"></select>
       <input id="leadSearchInput" type="search" placeholder="Search leads…"
         style="padding:9px 14px; border:1px solid var(--line); border-radius:999px; font-size:13px; min-width:210px; font-family:inherit;">
-      <button id="leadExportBtn" class="pill" type="button">↓ Export</button>`;
+      <button id="leadExportBtn" class="pill" type="button">↓ Export to Excel</button>`;
     titleRow.appendChild(controls);
 
     document.getElementById("leadSearchInput").addEventListener("input", (e) => {
@@ -1497,7 +1855,7 @@ function ensureLeadsControls(box) {
       leadPage = 1;
       renderLeadsTable();
     });
-    document.getElementById("leadExportBtn").addEventListener("click", exportLeadsCsv);
+    document.getElementById("leadExportBtn").addEventListener("click", (e) => exportTrackerExcel(e.target));
     document.getElementById("leadAgentSelect").addEventListener("change", (e) => {
       leadAgentFilter = e.target.value;
       leadPage = 1;
@@ -1608,7 +1966,7 @@ function renderLeadsTable() {
                     style="padding:8px 14px; border:1px solid var(--line); border-radius:8px; background:#fff;
                     font-size:12.5px; font-weight:700; color:var(--navy-900); cursor:pointer; font-family:inherit; white-space:nowrap;">
                     Complete Profile</button>
-                  ${seesEveryone ? `
+                  ${currentProfile?.can_delete_leads ? `
                     <button class="lead-delete" data-lead="${l.id}" type="button" title="Delete this lead"
                       style="padding:8px 11px; border:1px solid var(--line); border-radius:8px; background:#fff;
                       font-size:12.5px; font-weight:700; color:#b42318; cursor:pointer; font-family:inherit;">Delete</button>` : ""}
