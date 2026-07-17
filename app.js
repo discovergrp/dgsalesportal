@@ -679,13 +679,38 @@ function agentRange(period) {
   return { start: null, end: null };
 }
 
-function myLeads(range) {
+// Whose dashboard is on screen. Defaults to your own.
+let agentViewId = null;
+
+// You may open the dashboard of anyone strictly below you in rank, and your
+// own — never a peer's, and never someone above you. That's why Niña can see
+// every consultant but not the CEO.
+function viewableProfiles() {
   if (!currentProfile) return [];
-  const mine = allLeadsCache.filter(l => l.agent_id === currentProfile.id);
-  return range ? mine.filter(l => inRange(leadDate(l), range)) : mine;
+  const me = allProfilesCache.find(p => p.id === currentProfile.id);
+  const myRank = me?.rank ?? 10;
+  if (currentProfile.role !== "admin") return [me].filter(Boolean);
+  return allProfilesCache
+    .filter(p => p.id === currentProfile.id || (p.rank ?? 10) < myRank)
+    .sort((a, b) => (b.rank ?? 0) - (a.rank ?? 0) || a.full_name.localeCompare(b.full_name));
+}
+
+function viewedProfile() {
+  const list = viewableProfiles();
+  const found = list.find(p => p.id === agentViewId);
+  return found || list.find(p => p.id === currentProfile?.id) || null;
+}
+
+function myLeads(range) {
+  const who = viewedProfile();
+  if (!who) return [];
+  const theirs = allLeadsCache.filter(l => l.agent_id === who.id);
+  return range ? theirs.filter(l => inRange(leadDate(l), range)) : theirs;
 }
 
 function overviewFor(range) {
+  const who = viewedProfile();
+  if (!who) return { total: 0, qualified: 0, proposals: 0, won: 0, revenue: 0 };
   const leads = myLeads(range);
   const atLeast = label => leads.filter(l => stageRank(l.journey_stage) >= stageRank(label)).length;
   return {
@@ -693,7 +718,7 @@ function overviewFor(range) {
     qualified: atLeast("Discovery & Qualification"),
     proposals: atLeast("Solution Presented"),
     won: leads.filter(leadIsBooked).length,
-    revenue: netSalesInRange(currentProfile.id, range.start ? range : { start: null, end: null }),
+    revenue: netSalesInRange(who.id, range.start ? range : { start: null, end: null }),
   };
 }
 
@@ -819,19 +844,47 @@ function renderAgentDashboard() {
   const rows = tableLeads.slice(pageStart, pageStart + AGENT_LEADS_PER_PAGE);
 
   const feed = activityFeed(leads);
+  const who = viewedProfile();
+  const canSwitch = viewableProfiles().length > 1;
+  const viewingSomeoneElse = who && who.id !== currentProfile.id;
+
+  // Say plainly whose numbers these are — an admin glancing at this should
+  // never mistake someone else's pipeline for their own.
+  const sub = document.getElementById("agentSub");
+  if (sub && who) {
+    sub.textContent = viewingSomeoneElse
+      ? `Viewing ${who.full_name}'s performance`
+      : "Individual performance for " + who.full_name;
+  }
+
   const th = "padding:10px 12px; text-align:left; font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-faint); border-bottom:1px solid var(--line); white-space:nowrap;";
   const td = "padding:13px 12px; font-size:13px; border-bottom:1px solid rgba(0,0,0,.04); color:var(--ink-soft);";
 
   body.innerHTML = `
     <div class="card">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; gap:10px; flex-wrap:wrap;">
         <h2 style="margin:0; font-size:16px; color:var(--navy-900);">Sales Overview</h2>
-        <select id="agentPeriodSelect" style="padding:8px 12px; border:1px solid var(--line); border-radius:8px; font-size:13px; font-family:inherit; background:#fff;">
-          <option value="month" ${agentPeriod === "month" ? "selected" : ""}>This Month</option>
-          <option value="last" ${agentPeriod === "last" ? "selected" : ""}>Last Month</option>
-          <option value="all" ${agentPeriod === "all" ? "selected" : ""}>All Time</option>
-        </select>
+        <div style="display:flex; gap:8px; align-items:center;">
+          ${canSwitch ? `
+            <select id="agentWhoSelect" style="padding:8px 12px; border:1px solid var(--line); border-radius:8px;
+              font-size:13px; font-family:inherit; background:#fff; color:var(--navy-900); font-weight:600;">
+              ${viewableProfiles().map(p => `
+                <option value="${p.id}" ${p.id === who?.id ? "selected" : ""}>
+                  ${p.id === currentProfile.id ? "My dashboard" : p.full_name}
+                </option>`).join("")}
+            </select>` : ""}
+          <select id="agentPeriodSelect" style="padding:8px 12px; border:1px solid var(--line); border-radius:8px; font-size:13px; font-family:inherit; background:#fff;">
+            <option value="month" ${agentPeriod === "month" ? "selected" : ""}>This Month</option>
+            <option value="last" ${agentPeriod === "last" ? "selected" : ""}>Last Month</option>
+            <option value="all" ${agentPeriod === "all" ? "selected" : ""}>All Time</option>
+          </select>
+        </div>
       </div>
+      ${viewingSomeoneElse ? `
+        <div style="margin:-4px 0 14px; padding:8px 12px; background:#fff8e6; border:1px solid var(--gold-600);
+          border-radius:8px; font-size:12.5px; color:var(--navy-900);">
+          You're viewing <strong>${who.full_name}</strong>'s dashboard, not your own.
+        </div>` : ""}
       <div style="display:flex; gap:12px; flex-wrap:wrap;">
         ${statTile("Total Leads", scoped.total, deltaLabel(now.total, prev.total))}
         ${statTile("Qualified Leads", scoped.qualified, deltaLabel(now.qualified, prev.qualified))}
@@ -898,7 +951,7 @@ function renderAgentDashboard() {
     <div style="display:grid; grid-template-columns: 2.4fr 1fr; gap:16px; margin-top:16px;">
       <div class="card" style="margin:0;">
         <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:14px; flex-wrap:wrap;">
-          <h2 style="margin:0; font-size:16px; color:var(--navy-900);">My Leads</h2>
+          <h2 style="margin:0; font-size:16px; color:var(--navy-900);">${viewingSomeoneElse ? who.full_name.split(" ")[0] + "'s Leads" : "My Leads"}</h2>
           <div style="display:flex; gap:8px; align-items:center;">
             <input id="agentSearchInput" type="search" placeholder="Search leads…" value="${agentSearch.replace(/"/g, "&quot;")}"
               style="padding:8px 13px; border:1px solid var(--line); border-radius:8px; font-size:13px; font-family:inherit; min-width:190px;">
@@ -968,6 +1021,12 @@ function renderAgentDashboard() {
       </div>
     </div>`;
 
+  document.getElementById("agentWhoSelect")?.addEventListener("change", (e) => {
+    agentViewId = e.target.value;
+    agentPage = 1;
+    agentSearch = "";
+    renderAgentDashboard();
+  });
   document.getElementById("agentPeriodSelect")?.addEventListener("change", (e) => {
     agentPeriod = e.target.value; agentPage = 1; renderAgentDashboard();
   });
