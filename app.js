@@ -259,7 +259,7 @@ async function loadProfileAndEnter(userId) {
   }
   currentProfile = profile;
   enterWorkspace(profile.full_name, profile.role);
-  await Promise.all([loadProfiles(), loadLeads(), loadScorecards(), loadDocIndex(), loadApprovals(), loadMyPwRequest()]);
+  await Promise.all([loadProfiles(), loadLeads(), loadScorecards(), loadDocIndex(), loadApprovals(), loadMyPwRequest(), loadDepartures()]);
   renderAll();
 }
 
@@ -502,6 +502,8 @@ function renderAll() {
   renderLeadsTable();
   renderUrgentAlerts();
   wireResources();
+  ensureSlotsNav();
+  renderSlots();
 }
 
 // ---------- Daily Sales Ranking ----------
@@ -1532,7 +1534,22 @@ function editClientProfile(leadId) {
         editField("Number of travelers", "e_travelers", Number(l.travelers) || 1, "number") +
         editSelect("Visa status", "e_visa_status", l.visa_status, VISA_OPTIONS) +
         editSelect("Lead source", "e_lead_source", l.lead_source, SOURCE_OPTIONS) +
-        editField("Estimated deal value", "e_deal_value", Number(l.deal_value) || 0, "number"))}
+        editField("Estimated deal value", "e_deal_value", Number(l.deal_value) || 0, "number") +
+        `<div style="grid-column:1 / -1;">
+          <label style="display:block; font-size:11px; letter-spacing:.05em; text-transform:uppercase;
+            color:var(--ink-faint); margin-bottom:4px;">Departure — which trip is this client on?</label>
+          <select id="e_departure" style="width:100%; padding:8px 10px; border:1px solid var(--line);
+            border-radius:7px; font-size:13.5px; font-family:inherit; background:#fff; color:var(--navy-900);">
+            <option value="">Not assigned to a departure</option>
+            ${allDeparturesCache.map(d => {
+              const s = departureStats(d);
+              return `<option value="${d.id}" ${d.id === l.departure_id ? "selected" : ""}>
+                ${d.route} — ${departureDates(d)} (${s.available} of ${d.capacity} seats left)</option>`;
+            }).join("")}
+          </select>
+          <div style="font-size:11px; color:var(--ink-faint); margin-top:4px;">
+            The seat is counted once this client reaches Reservation or Successfully Booked.</div>
+        </div>`)}
 
       ${editGroup("Sales journey & closing strategy",
         editSelect("Journey stage", "e_stage", l.journey_stage, STAGE_OPTIONS) +
@@ -1630,6 +1647,7 @@ async function saveProfileEdits(leadId) {
     client_address: v("e_address"),
     package_destination: v("e_destination"),
     travel_date: v("e_travel_date"),
+    departure_id: document.getElementById("e_departure")?.value || null,
     travelers: Number(document.getElementById("e_travelers")?.value) || 1,
     visa_status: v("e_visa_status"),
     lead_source: v("e_lead_source"),
@@ -1671,8 +1689,521 @@ async function saveProfileEdits(leadId) {
   }
 
   await loadLeads();
+  await loadDepartures();
   renderAll();
   openClientProfile(leadId);   // back to the read-only view, now updated
+}
+
+// ---------- Slots Tracker ----------
+// Departures are entered by hand — route, dates and seats are facts, not
+// something to infer from lead data. Occupancy is then counted from the
+// clients placed on each departure.
+let allDeparturesCache = [];
+let slotSearch = "";
+let slotMonth = "";
+let slotStatus = "all";
+let openDepartureId = null;
+
+// A seat is only taken once a client is reserving or booked. An inquiry
+// isn't a seat — counting it would show trips as full that have sold nothing.
+const SEAT_TAKING_STAGES = ["Reservation / Payment Processing", "Successfully Booked"];
+
+async function loadDepartures() {
+  const { data, error } = await supabaseClient
+    .from("departures")
+    .select("*")
+    .order("start_date");
+  allDeparturesCache = (!error && data) ? data : [];
+}
+
+function departureLeads(depId) {
+  return allLeadsCache.filter(l => l.departure_id === depId);
+}
+
+function departureStats(d) {
+  const leads = departureLeads(d.id);
+  const seated = leads.filter(l => SEAT_TAKING_STAGES.includes(l.journey_stage));
+  const occupied = seated.reduce((s, l) => s + (Number(l.travelers) || 0), 0);
+  const available = d.capacity - occupied;
+  const revenue = seated.reduce((s, l) => s + (Number(l.deal_value) || 0), 0);
+  const paid = seated.reduce((s, l) => s + leadPaid(l), 0);
+  const paidPct = revenue > 0 ? Math.round((paid / revenue) * 100) : 0;
+
+  let status = "Available";
+  if (d.status_override) status = d.status_override;
+  else if (available < 0) status = "Overbooked";
+  else if (available === 0) status = "Full";
+  else if (available <= 5) status = "Nearly Full";
+
+  return { leads, seated, occupied, available, revenue, paid, paidPct, status };
+}
+
+const SLOT_STATUS_COLOUR = {
+  "Available": "#2e8b57", "Nearly Full": "#c9a227", "Full": "#2f5596",
+  "Overbooked": "#b42318", "Transfer": "#6b5bc4", "Closed": "#8a94a6", "Cancelled": "#8a94a6",
+};
+
+function slotBadge(status) {
+  const c = SLOT_STATUS_COLOUR[status] || "#8a94a6";
+  return `<span style="display:inline-block; padding:4px 11px; border-radius:999px; font-size:11px;
+    font-weight:700; background:${c}1a; color:${c};">${status}</span>`;
+}
+
+function departureDates(d) {
+  if (!d.end_date) return fmtDate(d.start_date);
+  const a = new Date(d.start_date + "T00:00:00");
+  const b = new Date(d.end_date + "T00:00:00");
+  const sameYear = a.getFullYear() === b.getFullYear();
+  const left = a.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const right = b.toLocaleDateString("en-US", sameYear
+    ? { month: "short", day: "numeric", year: "numeric" }
+    : { month: "short", day: "numeric", year: "numeric" });
+  return `${left} – ${right}`;
+}
+
+function filteredDepartures() {
+  const q = slotSearch.trim().toLowerCase();
+  return allDeparturesCache.filter(d => {
+    if (slotMonth && String(d.start_date).slice(0, 7) !== slotMonth) return false;
+    if (slotStatus !== "all" && departureStats(d).status !== slotStatus) return false;
+    if (q) {
+      const inRoute = (d.route || "").toLowerCase().includes(q);
+      const inClients = departureLeads(d.id).some(l => (l.client_full_name || "").toLowerCase().includes(q));
+      if (!inRoute && !inClients) return false;
+    }
+    return true;
+  });
+}
+
+function canManageDepartures() {
+  return currentProfile && currentProfile.role !== "agent";
+}
+
+// The nav button and the view aren't in index.html, so they're created here.
+function ensureSlotsNav() {
+  if (document.getElementById("view-slots")) return;
+
+  const nav = document.getElementById("nav");
+  const agentBtn = nav?.querySelector('button[data-view="agent"]');
+  if (!nav || !agentBtn) return;
+
+  const btn = document.createElement("button");
+  btn.dataset.view = "slots";
+  btn.textContent = "Slots Tracker";
+  agentBtn.insertAdjacentElement("afterend", btn);
+
+  const view = document.createElement("section");
+  view.className = "view";
+  view.id = "view-slots";
+  view.innerHTML = `
+    <div class="view-head">
+      <div>
+        <div class="eyebrow-line">Discover Group Sales OS</div>
+        <h1>Slots Tracker</h1>
+        <p>Monitor departures, available seats, payment status, and client allocations.</p>
+      </div>
+      <div class="date-pill">${new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}</div>
+    </div>
+    <div id="slotsBody"></div>`;
+  document.querySelector(".main")?.appendChild(view);
+
+  // Wire the new button into the existing nav behaviour.
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("#nav button[data-view]").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    document.querySelectorAll(".view").forEach(v => v.classList.remove("active"));
+    view.classList.add("active");
+    renderSlots();
+  });
+}
+
+function slotStat(label, value, hint, colour) {
+  return `
+    <div class="stat-card">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+        <div class="label">${label}</div>
+        <span style="width:11px; height:11px; border-radius:50%; background:${colour}; flex-shrink:0; margin-top:3px;"></span>
+      </div>
+      <div class="value">${value}</div>
+      <div class="hint">${hint}</div>
+    </div>`;
+}
+
+function renderSlots() {
+  const body = document.getElementById("slotsBody");
+  if (!body) return;
+
+  const list = filteredDepartures();
+  const all = allDeparturesCache;
+  const totals = all.map(departureStats);
+  const seatsAvailable = totals.reduce((s, t) => s + Math.max(t.available, 0), 0);
+  const nearlyFull = totals.filter(t => t.status === "Nearly Full").length;
+  const overbooked = totals.filter(t => t.status === "Overbooked").length;
+
+  const months = [...new Set(all.map(d => String(d.start_date).slice(0, 7)))].sort();
+  const th = "padding:10px 12px; text-align:left; font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-faint); border-bottom:1px solid var(--line); white-space:nowrap;";
+  const td = "padding:14px 12px; font-size:13px; border-bottom:1px solid rgba(0,0,0,.05); color:var(--ink-soft);";
+
+  const unassigned = allLeadsCache.filter(l => !l.departure_id).length;
+
+  body.innerHTML = `
+    <div class="stat-grid" style="grid-template-columns:repeat(4,1fr);">
+      ${slotStat("Total Departures", all.length, "On the schedule", "#4a6fb5")}
+      ${slotStat("Seats Available", seatsAvailable, "Across active routes", "#2e8b57")}
+      ${slotStat("Nearly Full", nearlyFull, "5 seats or fewer", "#c9a227")}
+      ${slotStat("Overbooked", overbooked, "Needs immediate action", "#b42318")}
+    </div>
+
+    <div class="card">
+      <div class="card-title-row" style="align-items:flex-start;">
+        <div>
+          <h2>Departure Inventory</h2>
+          <p>One row per departure. Open a departure to see the clients on it.</p>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <input id="slotSearch" type="search" placeholder="Search route or client" value="${slotSearch.replace(/"/g, "&quot;")}"
+            style="padding:8px 13px; border:1px solid var(--line); border-radius:8px; font-size:13px; font-family:inherit; min-width:190px;">
+          <select id="slotMonth" style="padding:8px 12px; border:1px solid var(--line); border-radius:8px; font-size:13px; font-family:inherit; background:#fff;">
+            <option value="">Month: All</option>
+            ${months.map(m => `<option value="${m}" ${m === slotMonth ? "selected" : ""}>
+              ${new Date(m + "-01T00:00:00").toLocaleDateString("en-US", { month: "long", year: "numeric" })}</option>`).join("")}
+          </select>
+          <select id="slotStatus" style="padding:8px 12px; border:1px solid var(--line); border-radius:8px; font-size:13px; font-family:inherit; background:#fff;">
+            ${["all", "Available", "Nearly Full", "Full", "Overbooked", "Transfer", "Closed", "Cancelled"]
+              .map(s => `<option value="${s}" ${s === slotStatus ? "selected" : ""}>${s === "all" ? "Status: All" : s}</option>`).join("")}
+          </select>
+          <button id="slotExport" class="pill" type="button">↓ Export</button>
+          ${canManageDepartures() ? `
+            <button id="slotAdd" type="button" style="padding:8px 15px; border:none; border-radius:8px;
+              background:var(--navy-900); color:#fff; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit;">
+              + Add Departure</button>` : ""}
+        </div>
+      </div>
+
+      ${all.length === 0 ? `
+        <div class="registry-empty" style="padding:40px 20px;">
+          No departures yet.${canManageDepartures()
+            ? ' Click <strong>+ Add Departure</strong> to put the first trip on the schedule.'
+            : " An admin needs to add them."}
+        </div>` : list.length === 0 ? `
+        <div class="registry-empty">No departures match these filters.</div>` : `
+        <div style="overflow-x:auto;">
+          <table style="width:100%; border-collapse:collapse; min-width:940px;">
+            <thead><tr>
+              <th style="${th}">Route</th>
+              <th style="${th}">Travel date</th>
+              <th style="${th} text-align:center;">Capacity</th>
+              <th style="${th} text-align:center;">Occupied</th>
+              <th style="${th} text-align:center;">Available</th>
+              <th style="${th}">Status</th>
+              <th style="${th} text-align:right;">Revenue</th>
+              <th style="${th} text-align:right;">Payment</th>
+              <th style="${th}">Action</th>
+            </tr></thead>
+            <tbody>
+              ${list.map(d => {
+                const s = departureStats(d);
+                return `
+                  <tr>
+                    <td style="${td} font-weight:700; color:var(--navy-900);">${d.route}</td>
+                    <td style="${td}">${departureDates(d)}</td>
+                    <td style="${td} text-align:center;">${d.capacity}</td>
+                    <td style="${td} text-align:center;">${s.occupied}</td>
+                    <td style="${td} text-align:center; font-weight:700; color:${s.available < 0 ? FLAG_RED : "var(--navy-900)"};">${s.available}</td>
+                    <td style="${td}">${slotBadge(s.status)}</td>
+                    <td style="${td} text-align:right;">${s.revenue ? shortCurrency(s.revenue) : "₱0"}</td>
+                    <td style="${td} text-align:right;">${s.revenue ? s.paidPct + "% Paid" : "—"}</td>
+                    <td style="${td}">
+                      <button class="slot-view" data-dep="${d.id}" type="button"
+                        style="padding:6px 12px; border:1px solid var(--line); border-radius:7px; background:#fff;
+                        font-size:12px; font-weight:600; color:var(--navy-900); cursor:pointer; font-family:inherit;">View Details</button>
+                    </td>
+                  </tr>`;
+              }).join("")}
+            </tbody>
+          </table>
+        </div>`}
+
+      ${unassigned > 0 ? `
+        <div style="margin-top:16px; padding:12px 14px; background:#f4f6fa; border:1px solid var(--line);
+          border-radius:10px; font-size:12.5px; color:var(--ink-soft);">
+          <strong style="color:var(--navy-900);">${unassigned}</strong> client${unassigned === 1 ? " is" : "s are"} not on any departure yet.
+          Open a client, choose <strong>Edit profile</strong>, and pick their departure — they'll be counted here once they are.
+        </div>` : ""}
+    </div>`;
+
+  document.getElementById("slotSearch")?.addEventListener("input", (e) => {
+    slotSearch = e.target.value;
+    renderSlots();
+    const el = document.getElementById("slotSearch");
+    if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+  });
+  document.getElementById("slotMonth")?.addEventListener("change", (e) => { slotMonth = e.target.value; renderSlots(); });
+  document.getElementById("slotStatus")?.addEventListener("change", (e) => { slotStatus = e.target.value; renderSlots(); });
+  document.getElementById("slotAdd")?.addEventListener("click", () => departureForm(null));
+  document.getElementById("slotExport")?.addEventListener("click", (e) => exportDeparturesExcel(e.target));
+  body.querySelectorAll(".slot-view").forEach(b =>
+    b.addEventListener("click", () => openDeparture(b.dataset.dep)));
+}
+
+async function exportDeparturesExcel(btn) {
+  const original = btn.textContent;
+  btn.disabled = true; btn.textContent = "Preparing…";
+  try {
+    const XLSX = await loadXlsx();
+    const rows = filteredDepartures().map(d => {
+      const s = departureStats(d);
+      return {
+        "Route": d.route,
+        "Start date": fmtDate(d.start_date),
+        "End date": d.end_date ? fmtDate(d.end_date) : "",
+        "Capacity": d.capacity,
+        "Occupied": s.occupied,
+        "Available": s.available,
+        "Status": s.status,
+        "Clients": s.seated.length,
+        "Revenue": s.revenue,
+        "Paid": s.paid,
+        "Payment %": s.paidPct,
+        "Notes": d.notes || "",
+      };
+    });
+    if (rows.length === 0) { btn.textContent = "Nothing to export"; setTimeout(() => { btn.disabled = false; btn.textContent = original; }, 1600); return; }
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws["!cols"] = [{ wch: 22 }, { wch: 14 }, { wch: 14 }, { wch: 10 }, { wch: 10 }, { wch: 10 },
+                   { wch: 14 }, { wch: 9 }, { wch: 14 }, { wch: 14 }, { wch: 11 }, { wch: 30 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Departures");
+    XLSX.writeFile(wb, `discover-group-departures-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    btn.textContent = `Exported ${rows.length}`;
+  } catch (e) {
+    btn.textContent = "Export failed";
+    console.error(e);
+  }
+  setTimeout(() => { btn.disabled = false; btn.textContent = original; }, 1600);
+}
+
+// ---------- Adding and editing a departure ----------
+function departureForm(dep) {
+  if (!canManageDepartures()) return;
+  const editing = !!dep;
+
+  let ov = document.getElementById("depFormOverlay");
+  if (!ov) {
+    ov = document.createElement("div");
+    ov.id = "depFormOverlay";
+    ov.style.cssText = `position:fixed; inset:0; background:rgba(8,18,38,.55); z-index:10000;
+      display:flex; align-items:flex-start; justify-content:center; overflow-y:auto; padding:40px 20px;`;
+    document.body.appendChild(ov);
+    ov.addEventListener("click", (e) => { if (e.target === ov) ov.style.display = "none"; });
+  }
+
+  ov.innerHTML = `
+    <div style="background:#fff; border-radius:16px; max-width:620px; width:100%; padding:26px 28px 30px;
+      box-shadow:0 24px 60px rgba(0,0,0,.3);">
+      <h2 style="margin:0 0 4px; font-size:20px; color:var(--navy-900);">${editing ? "Edit departure" : "Add a departure"}</h2>
+      <p style="margin:0 0 18px; font-size:13px; color:var(--ink-soft);">Route, dates and seats. Clients are placed on it afterwards.</p>
+
+      <div id="depError" style="display:none; margin-bottom:12px; padding:10px 12px; background:#fdecea;
+        border:1px solid ${FLAG_RED}; border-radius:8px; font-size:13px; color:${FLAG_RED};"></div>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px 16px;">
+        <div style="grid-column:1 / -1;">
+          <label style="display:block; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--ink-faint); margin-bottom:4px;">Route name</label>
+          <input id="d_route" type="text" value="${(dep?.route || "").replace(/"/g, "&quot;")}" placeholder="e.g. Route N Deluxe"
+            style="width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:8px; font-size:13.5px; font-family:inherit;">
+        </div>
+        <div>
+          <label style="display:block; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--ink-faint); margin-bottom:4px;">Departure date</label>
+          <input id="d_start" type="date" value="${dep?.start_date || ""}"
+            style="width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:8px; font-size:13.5px; font-family:inherit;">
+        </div>
+        <div>
+          <label style="display:block; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--ink-faint); margin-bottom:4px;">Return date (optional)</label>
+          <input id="d_end" type="date" value="${dep?.end_date || ""}"
+            style="width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:8px; font-size:13.5px; font-family:inherit;">
+        </div>
+        <div>
+          <label style="display:block; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--ink-faint); margin-bottom:4px;">Seats</label>
+          <input id="d_capacity" type="number" min="1" value="${dep?.capacity ?? 40}"
+            style="width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:8px; font-size:13.5px; font-family:inherit;">
+        </div>
+        <div>
+          <label style="display:block; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--ink-faint); margin-bottom:4px;">Status override</label>
+          <select id="d_override" style="width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:8px; font-size:13.5px; font-family:inherit; background:#fff;">
+            ${["", "Transfer", "Closed", "Cancelled"].map(o =>
+              `<option value="${o}" ${o === (dep?.status_override || "") ? "selected" : ""}>${o || "Calculate automatically"}</option>`).join("")}
+          </select>
+        </div>
+        <div style="grid-column:1 / -1;">
+          <label style="display:block; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--ink-faint); margin-bottom:4px;">Notes</label>
+          <textarea id="d_notes" rows="2" style="width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:8px; font-size:13.5px; font-family:inherit; resize:vertical;">${dep?.notes || ""}</textarea>
+        </div>
+      </div>
+
+      <div style="display:flex; gap:10px; margin-top:22px;">
+        <button type="button" id="depSave" style="padding:10px 20px; border:none; border-radius:8px;
+          background:var(--navy-900); color:#fff; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit;">
+          ${editing ? "Save changes" : "Add departure"}</button>
+        <button type="button" id="depCancel" style="padding:10px 18px; border:1px solid var(--line); border-radius:8px;
+          background:#fff; font-size:13px; font-weight:700; color:var(--navy-900); cursor:pointer; font-family:inherit;">Cancel</button>
+      </div>
+    </div>`;
+
+  ov.style.display = "flex";
+  document.getElementById("depCancel").onclick = () => { ov.style.display = "none"; };
+  document.getElementById("depSave").onclick = () => saveDeparture(dep?.id || null, ov);
+}
+
+async function saveDeparture(depId, ov) {
+  const err = document.getElementById("depError");
+  const btn = document.getElementById("depSave");
+  const route = document.getElementById("d_route").value.trim();
+  const start = document.getElementById("d_start").value;
+  const end = document.getElementById("d_end").value || null;
+  const capacity = Number(document.getElementById("d_capacity").value) || 0;
+
+  const fail = msg => { err.textContent = msg; err.style.display = "block"; };
+
+  if (!route) return fail("Give the departure a route name.");
+  if (!start) return fail("A departure needs a date.");
+  if (capacity < 1) return fail("Seats must be at least 1.");
+  if (end && end < start) return fail("The return date can't be before the departure date.");
+  if (dateLooksWrong(start) || (end && dateLooksWrong(end))) {
+    return fail("That date's year looks wrong — check it before saving.");
+  }
+
+  btn.disabled = true;
+  btn.textContent = "Saving…";
+  err.style.display = "none";
+
+  const payload = {
+    route, start_date: start, end_date: end, capacity,
+    status_override: document.getElementById("d_override").value || null,
+    notes: document.getElementById("d_notes").value.trim() || null,
+  };
+
+  const { error } = depId
+    ? await supabaseClient.from("departures").update(payload).eq("id", depId)
+    : await supabaseClient.from("departures").insert({ ...payload, created_by: currentProfile.id });
+
+  if (error) {
+    fail("Couldn't save — " + error.message);
+    btn.disabled = false;
+    btn.textContent = depId ? "Save changes" : "Add departure";
+    return;
+  }
+
+  await loadDepartures();
+  ov.style.display = "none";
+  renderSlots();
+}
+
+// ---------- One departure's clients ----------
+function openDeparture(depId) {
+  const d = allDeparturesCache.find(x => x.id === depId);
+  if (!d) return;
+  const s = departureStats(d);
+  openDepartureId = depId;
+
+  let ov = document.getElementById("depDrawer");
+  if (!ov) {
+    ov = document.createElement("div");
+    ov.id = "depDrawer";
+    ov.style.cssText = `position:fixed; inset:0; background:rgba(8,18,38,.55); z-index:9998;
+      display:flex; align-items:flex-start; justify-content:center; overflow-y:auto; padding:32px 20px;`;
+    document.body.appendChild(ov);
+    ov.addEventListener("click", (e) => { if (e.target === ov) ov.style.display = "none"; });
+  }
+
+  const th = "padding:9px 10px; text-align:left; font-size:10.5px; letter-spacing:.05em; text-transform:uppercase; color:var(--ink-faint); border-bottom:1px solid var(--line);";
+  const td = "padding:11px 10px; font-size:13px; border-bottom:1px solid rgba(0,0,0,.05); color:var(--ink-soft);";
+
+  // Everyone on the trip, including those still deciding — they're not a seat
+  // yet, but the consultant needs to see them.
+  const rows = s.leads.sort((a, b) => (b.travelers || 0) - (a.travelers || 0));
+
+  ov.innerHTML = `
+    <div style="background:#fff; border-radius:16px; max-width:1000px; width:100%; padding:26px 28px 30px;
+      box-shadow:0 24px 60px rgba(0,0,0,.3);">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px;">
+        <div>
+          <div style="font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--gold-600); font-weight:700;">Departure</div>
+          <h2 style="margin:4px 0 6px; font-size:23px; color:var(--navy-900);">${d.route}</h2>
+          <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+            ${slotBadge(s.status)}
+            <span style="font-size:13px; color:var(--ink-soft);">${departureDates(d)}</span>
+          </div>
+        </div>
+        <button type="button" id="depDrawerX" style="background:none; border:none; font-size:24px; color:var(--ink-faint); cursor:pointer;">&times;</button>
+      </div>
+
+      <div style="display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin-top:20px;">
+        ${[["Capacity", d.capacity], ["Occupied", s.occupied],
+           ["Available", s.available], ["Revenue", currency(s.revenue)],
+           ["Collected", currency(s.paid) + (s.revenue ? ` · ${s.paidPct}%` : "")]]
+          .map(([k, v]) => `
+            <div style="background:#f4f6fa; border-radius:10px; padding:12px 14px;">
+              <div style="font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--ink-faint);">${k}</div>
+              <div style="font-size:17px; font-weight:800; color:${k === "Available" && s.available < 0 ? FLAG_RED : "var(--navy-900)"};">${v}</div>
+            </div>`).join("")}
+      </div>
+
+      ${d.notes ? `<div style="margin-top:14px; font-size:12.5px; color:var(--ink-soft);"><strong>Notes:</strong> ${d.notes}</div>` : ""}
+
+      <h3 style="margin:22px 0 10px; font-size:15px; color:var(--navy-900);">Clients on this departure (${rows.length})</h3>
+      ${rows.length === 0 ? `
+        <div class="registry-empty">Nobody is on this departure yet. Open a client, choose Edit profile, and pick this departure.</div>` : `
+        <div style="overflow-x:auto;">
+          <table style="width:100%; border-collapse:collapse; min-width:760px;">
+            <thead><tr>
+              <th style="${th}">Client</th><th style="${th} text-align:center;">Pax</th>
+              <th style="${th}">Stage</th><th style="${th}">Consultant</th>
+              <th style="${th} text-align:right;">Deal value</th><th style="${th} text-align:right;">Paid</th>
+              <th style="${th} text-align:right;">Balance</th><th style="${th}"></th>
+            </tr></thead>
+            <tbody>
+              ${rows.map(l => {
+                const paid = leadPaid(l);
+                const val = Number(l.deal_value) || 0;
+                const seat = SEAT_TAKING_STAGES.includes(l.journey_stage);
+                return `
+                  <tr style="${seat ? "" : "opacity:.62;"}">
+                    <td style="${td} font-weight:600; color:var(--navy-900);">${l.client_full_name || "Unnamed"}</td>
+                    <td style="${td} text-align:center;">${Number(l.travelers) || 0}</td>
+                    <td style="${td}">${l.journey_stage || "—"}${seat ? "" : '<div style="font-size:10.5px; color:var(--ink-faint);">not holding a seat</div>'}</td>
+                    <td style="${td}">${agentName(l.agent_id)}</td>
+                    <td style="${td} text-align:right;">${currency(val)}</td>
+                    <td style="${td} text-align:right;">${currency(paid)}</td>
+                    <td style="${td} text-align:right; font-weight:600;">${currency(Math.max(val - paid, 0))}</td>
+                    <td style="${td}"><button class="dep-client" data-lead="${l.id}" type="button"
+                      style="padding:5px 11px; border:1px solid var(--line); border-radius:6px; background:#fff;
+                      font-size:12px; font-weight:600; color:var(--navy-900); cursor:pointer; font-family:inherit;">Open</button></td>
+                  </tr>`;
+              }).join("")}
+            </tbody>
+          </table>
+        </div>`}
+
+      <div style="display:flex; gap:10px; margin-top:22px; padding-top:16px; border-top:1px solid var(--line);">
+        ${canManageDepartures() ? `
+          <button type="button" id="depEdit" style="padding:10px 18px; border:none; border-radius:8px;
+            background:var(--gold-600); color:#fff; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit;">Edit departure</button>` : ""}
+        <button type="button" id="depDrawerClose" style="padding:10px 18px; border:1px solid var(--line); border-radius:8px;
+          background:#fff; font-size:13px; font-weight:700; color:var(--navy-900); cursor:pointer; font-family:inherit;">Close</button>
+      </div>
+    </div>`;
+
+  ov.style.display = "flex";
+  const close = () => { ov.style.display = "none"; openDepartureId = null; };
+  document.getElementById("depDrawerX").onclick = close;
+  document.getElementById("depDrawerClose").onclick = close;
+  const de = document.getElementById("depEdit");
+  if (de) de.onclick = () => { close(); departureForm(d); };
+  ov.querySelectorAll(".dep-client").forEach(b => b.addEventListener("click", () => {
+    close();
+    openClientProfile(b.dataset.lead);
+  }));
 }
 
 // ---------- Urgent Admin Attention ----------
