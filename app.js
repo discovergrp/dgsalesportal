@@ -259,8 +259,142 @@ async function loadProfileAndEnter(userId) {
   }
   currentProfile = profile;
   enterWorkspace(profile.full_name, profile.role);
-  await Promise.all([loadProfiles(), loadLeads(), loadScorecards(), loadApprovals()]);
+  await Promise.all([loadProfiles(), loadLeads(), loadScorecards(), loadDocIndex(), loadApprovals(), loadMyPwRequest()]);
   renderAll();
+}
+
+// ---------- Change password (admin-approved) ----------
+// An employee requests, an admin approves, and the approval is spent on one
+// change. Worth knowing: this is a workflow control, not a security boundary.
+// Supabase Auth always permits a signed-in user to change their own password,
+// so a determined person could bypass the UI. It stops normal use and leaves
+// an audit trail; it is not a lock.
+let myPwRequest = null;
+
+async function loadMyPwRequest() {
+  if (!currentProfile) return;
+  const { data, error } = await supabaseClient
+    .from("password_change_requests")
+    .select("*")
+    .eq("agent_id", currentProfile.id)
+    .in("status", ["Pending", "Approved"])
+    .order("created_at", { ascending: false })
+    .limit(1);
+  myPwRequest = (!error && data && data.length) ? data[0] : null;
+}
+
+function ensurePasswordPanel() {
+  if (document.getElementById("pwPanel")) return;
+  const box = document.querySelector(".workspace-box");
+  if (!box) return;
+
+  const link = document.createElement("button");
+  link.type = "button";
+  link.id = "pwLink";
+  link.style.cssText = `display:block; margin-top:10px; background:none; border:none; padding:0;
+    color:var(--gold-600); font-size:11.5px; font-weight:600; cursor:pointer; font-family:inherit;
+    text-decoration:underline; text-align:left;`;
+  box.appendChild(link);
+
+  const panel = document.createElement("div");
+  panel.id = "pwPanel";
+  panel.style.cssText = "display:none; margin-top:10px;";
+  panel.innerHTML = `
+    <input type="password" id="pwNew" placeholder="New password" autocomplete="new-password"
+      style="width:100%; padding:7px 9px; border:1px solid rgba(255,255,255,.25); border-radius:6px;
+      background:rgba(255,255,255,.1); color:#fff; font-size:12px; font-family:inherit; margin-bottom:6px;">
+    <input type="password" id="pwConfirm" placeholder="Confirm new password" autocomplete="new-password"
+      style="width:100%; padding:7px 9px; border:1px solid rgba(255,255,255,.25); border-radius:6px;
+      background:rgba(255,255,255,.1); color:#fff; font-size:12px; font-family:inherit; margin-bottom:6px;">
+    <button type="button" id="pwSave"
+      style="width:100%; padding:7px; border:none; border-radius:6px; background:var(--gold-600);
+      color:#fff; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">Save password</button>
+    <div id="pwMsg" style="font-size:11px; margin-top:6px; color:#fff; opacity:.85;"></div>`;
+  box.appendChild(panel);
+
+  link.addEventListener("click", async () => {
+    const status = myPwRequest?.status;
+
+    if (status === "Approved") {
+      const open = panel.style.display === "block";
+      panel.style.display = open ? "none" : "block";
+      link.textContent = open ? "Set a new password" : "Cancel";
+      return;
+    }
+    if (status === "Pending") return; // waiting on an admin
+
+    const reason = prompt("Why do you need to change your password?\n(An admin has to approve this first.)");
+    if (reason === null) return;
+
+    const { error } = await supabaseClient.from("password_change_requests").insert({
+      agent_id: currentProfile.id,
+      reason: reason || null,
+    });
+    if (error) { link.textContent = "Couldn't send request"; return; }
+    await loadMyPwRequest();
+    renderPasswordPanel();
+  });
+
+  document.getElementById("pwSave").addEventListener("click", async () => {
+    const a = document.getElementById("pwNew").value;
+    const b = document.getElementById("pwConfirm").value;
+    const msg = document.getElementById("pwMsg");
+    const btn = document.getElementById("pwSave");
+
+    if (myPwRequest?.status !== "Approved") { msg.textContent = "Not approved yet."; return; }
+    if (a.length < 8) { msg.textContent = "Use at least 8 characters."; return; }
+    if (a !== b) { msg.textContent = "The two passwords don't match."; return; }
+
+    btn.disabled = true;
+    btn.textContent = "Saving…";
+    const { error } = await supabaseClient.auth.updateUser({ password: a });
+    if (error) {
+      btn.disabled = false;
+      btn.textContent = "Save password";
+      msg.textContent = "Couldn't change it — " + error.message;
+      return;
+    }
+
+    // Spend the approval so it can't be reused.
+    await supabaseClient.from("password_change_requests")
+      .update({ status: "Used", used_at: new Date().toISOString() })
+      .eq("id", myPwRequest.id);
+
+    msg.textContent = "Password changed ✓";
+    document.getElementById("pwNew").value = "";
+    document.getElementById("pwConfirm").value = "";
+    await loadMyPwRequest();
+    setTimeout(() => { panel.style.display = "none"; msg.textContent = ""; renderPasswordPanel(); }, 1600);
+    btn.disabled = false;
+    btn.textContent = "Save password";
+  });
+
+  renderPasswordPanel();
+}
+
+function renderPasswordPanel() {
+  const link = document.getElementById("pwLink");
+  const panel = document.getElementById("pwPanel");
+  if (!link || !panel) return;
+  const status = myPwRequest?.status;
+
+  if (status === "Approved") {
+    link.textContent = "Set a new password";
+    link.style.cursor = "pointer";
+    link.style.opacity = "1";
+  } else if (status === "Pending") {
+    link.textContent = "Password change — awaiting approval";
+    link.style.cursor = "default";
+    link.style.opacity = "0.7";
+    link.style.textDecoration = "none";
+    panel.style.display = "none";
+  } else {
+    link.textContent = "Request password change";
+    link.style.cursor = "pointer";
+    link.style.opacity = "1";
+    link.style.textDecoration = "underline";
+    panel.style.display = "none";
+  }
 }
 
 function enterWorkspace(name, role) {
@@ -270,6 +404,7 @@ function enterWorkspace(name, role) {
   document.getElementById("agentSub").textContent = "Individual performance for " + name;
   document.getElementById("scorecardSub").textContent = "Daily scorecard for " + name;
   document.getElementById("leadsOwner").textContent = name + "'s Leads Tracker";
+  ensurePasswordPanel();
 
   document.getElementById("loginScreen").style.display = "none";
   document.getElementById("app").classList.add("active");
@@ -366,6 +501,7 @@ function renderAll() {
   renderAgentDashboard();
   renderLeadsTable();
   renderUrgentAlerts();
+  wireResources();
 }
 
 // ---------- Daily Sales Ranking ----------
@@ -855,6 +991,51 @@ function renderAgentDashboard() {
   }));
 }
 
+// ---------- Resources ----------
+// The cards in index.html ship with dead links (href="#"). Point the ones we
+// have destinations for at the real thing, and leave the rest honestly
+// labelled rather than pretending to be clickable.
+const RESOURCE_LINKS = {
+  "FAQs": {
+    url: "https://chatgpt.com/g/g-p-6a57a15c2f448191b58f88017368c550-dg-script/project",
+    label: "Ask DG Script →",
+  },
+};
+
+function wireResources() {
+  document.querySelectorAll("#view-resources .stat-card").forEach(card => {
+    const title = card.querySelector(".label")?.textContent.trim();
+    const link = card.querySelector("a");
+    if (!title || !link) return;
+
+    const target = RESOURCE_LINKS[title];
+    if (target) {
+      link.textContent = target.label;
+      link.href = target.url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.onclick = null;              // clear the return-false stub
+      link.style.opacity = "1";
+      link.style.cursor = "pointer";
+    } else {
+      // No document yet — say so instead of offering a link that does nothing.
+      link.textContent = "Not uploaded yet";
+      link.removeAttribute("href");
+      link.style.color = "var(--ink-faint)";
+      link.style.textDecoration = "none";
+      link.style.cursor = "default";
+      link.onclick = null;
+    }
+  });
+
+  // FAQs is now a live AI assistant, so the card should say what it is.
+  document.querySelectorAll("#view-resources .stat-card").forEach(card => {
+    if (card.querySelector(".label")?.textContent.trim() !== "FAQs") return;
+    const hint = card.querySelector(".hint");
+    if (hint) hint.textContent = "Ask DG Script — the AI sales assistant — about packages, objections, and scripts. Opens in ChatGPT; you'll need your own account.";
+  });
+}
+
 // ---------- Urgent Admin Attention ----------
 function renderUrgentAlerts() {
   const list = document.getElementById("urgentAlertsList");
@@ -1147,12 +1328,211 @@ function renderLeadsTable() {
 }
 
 // ---------- Client's Documents ----------
+// ---------- Client's Documents: search & retrieval ----------
+let docIndex = [];        // lead_id of every document this user can see
+let docFilters = { name: "", pkg: "", rateMin: "", rateMax: "", travelMonth: "", travelWeek: "", payMonth: "", payWeek: "" };
+
+async function loadDocIndex() {
+  const { data, error } = await supabaseClient.from("client_documents").select("lead_id");
+  docIndex = (!error && data) ? data.map(d => d.lead_id) : [];
+}
+
+function docCount(leadId) {
+  return docIndex.filter(id => id === leadId).length;
+}
+
+// Weeks run 1–7, 8–14, 15–21, 22–end. Week 4 absorbs the 29th onward so
+// nothing falls into a phantom "week 5".
+function weekOfMonth(day) {
+  return Math.min(4, Math.ceil(day / 7));
+}
+
+function matchesMonthWeek(dateStr, month, week) {
+  if (!month && !week) return true;
+  if (!dateStr) return false;
+  const d = dateStr.length <= 10 ? new Date(dateStr + "T00:00:00") : new Date(dateStr);
+  if (isNaN(d)) return false;
+  if (month) {
+    const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    if (ym !== month) return false;
+  }
+  if (week && weekOfMonth(d.getDate()) !== Number(week)) return false;
+  return true;
+}
+
+function docSearchResults() {
+  const f = docFilters;
+  const q = f.name.trim().toLowerCase();
+
+  return allLeadsCache.filter(l => {
+    if (!l.client_full_name) return false;
+    if (q && !l.client_full_name.toLowerCase().includes(q)) return false;
+    if (f.pkg && (l.package_destination || "") !== f.pkg) return false;
+
+    const rate = Number(l.deal_value) || 0;
+    if (f.rateMin !== "" && rate < Number(f.rateMin)) return false;
+    if (f.rateMax !== "" && rate > Number(f.rateMax)) return false;
+
+    if ((f.travelMonth || f.travelWeek) && !matchesMonthWeek(l.travel_date, f.travelMonth, f.travelWeek)) return false;
+
+    if (f.payMonth || f.payWeek) {
+      const hit = (l.payments || []).some(p => matchesMonthWeek(p.date, f.payMonth, f.payWeek));
+      if (!hit) return false;
+    }
+    return true;
+  }).sort((a, b) => (a.client_full_name || "").localeCompare(b.client_full_name || ""));
+}
+
+function ensureDocSearch() {
+  if (document.getElementById("docSearchPanel")) return;
+  const sel = document.getElementById("voucherClientSelect");
+  if (!sel) return;
+  const card = sel.closest(".card");
+  if (!card) return;
+
+  // The dropdown still drives which client is open — other screens set it and
+  // fire a change event — so it stays, just out of the way.
+  const field = sel.closest(".form-field");
+  if (field) field.style.display = "none";
+
+  const panel = document.createElement("div");
+  panel.id = "docSearchPanel";
+  panel.innerHTML = `
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+      <div>
+        <h2 style="margin:0 0 2px; font-size:16px; color:var(--navy-900);">Find a client</h2>
+        <p style="margin:0; font-size:12.5px; color:var(--ink-soft);">Search by name, package, rate, travel week, or payment week</p>
+      </div>
+      <button type="button" id="docClearBtn" class="pill">Clear filters</button>
+    </div>
+
+    <div class="form-grid" style="gap:12px;">
+      <div class="form-field"><label>Client name</label><input type="search" id="docFName" placeholder="Type a name…"></div>
+      <div class="form-field"><label>Package name</label><select id="docFPkg"></select></div>
+      <div class="form-field">
+        <label>Package rate</label>
+        <div style="display:flex; gap:8px;">
+          <input type="number" id="docFRateMin" placeholder="Min" style="flex:1;">
+          <input type="number" id="docFRateMax" placeholder="Max" style="flex:1;">
+        </div>
+      </div>
+    </div>
+
+    <div class="form-grid" style="gap:12px; margin-top:14px;">
+      <div class="form-field">
+        <label>Travel month</label>
+        <div style="display:flex; gap:8px;">
+          <input type="month" id="docFTravelMonth" style="flex:1.4;">
+          <select id="docFTravelWeek" style="flex:1;">
+            <option value="">Any week</option><option value="1">Week 1</option><option value="2">Week 2</option>
+            <option value="3">Week 3</option><option value="4">Week 4</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-field">
+        <label>Payment month</label>
+        <div style="display:flex; gap:8px;">
+          <input type="month" id="docFPayMonth" style="flex:1.4;">
+          <select id="docFPayWeek" style="flex:1;">
+            <option value="">Any week</option><option value="1">Week 1</option><option value="2">Week 2</option>
+            <option value="3">Week 3</option><option value="4">Week 4</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div id="docResults" style="margin-top:16px;"></div>`;
+  card.appendChild(panel);
+
+  const bind = (id, key) => document.getElementById(id)?.addEventListener("input", (e) => {
+    docFilters[key] = e.target.value;
+    renderDocResults();
+  });
+  bind("docFName", "name");
+  bind("docFRateMin", "rateMin");
+  bind("docFRateMax", "rateMax");
+  ["docFPkg:pkg", "docFTravelMonth:travelMonth", "docFTravelWeek:travelWeek", "docFPayMonth:payMonth", "docFPayWeek:payWeek"]
+    .forEach(pair => {
+      const [id, key] = pair.split(":");
+      document.getElementById(id)?.addEventListener("change", (e) => {
+        docFilters[key] = e.target.value;
+        renderDocResults();
+      });
+    });
+
+  document.getElementById("docClearBtn").addEventListener("click", () => {
+    docFilters = { name: "", pkg: "", rateMin: "", rateMax: "", travelMonth: "", travelWeek: "", payMonth: "", payWeek: "" };
+    ["docFName", "docFRateMin", "docFRateMax", "docFTravelMonth", "docFPayMonth"].forEach(id => {
+      const el = document.getElementById(id); if (el) el.value = "";
+    });
+    ["docFPkg", "docFTravelWeek", "docFPayWeek"].forEach(id => {
+      const el = document.getElementById(id); if (el) el.value = "";
+    });
+    renderDocResults();
+  });
+}
+
+function renderDocResults() {
+  const box = document.getElementById("docResults");
+  if (!box) return;
+
+  // Package list comes from the real bookings, so it never offers a dead option.
+  const pkgSel = document.getElementById("docFPkg");
+  if (pkgSel) {
+    const pkgs = [...new Set(allLeadsCache.map(l => (l.package_destination || "").trim()).filter(Boolean))].sort();
+    const wanted = '<option value="">All packages</option>' + pkgs.map(p => `<option value="${p}">${p}</option>`).join("");
+    if (pkgSel.innerHTML !== wanted) { pkgSel.innerHTML = wanted; pkgSel.value = docFilters.pkg; }
+  }
+
+  const results = docSearchResults();
+  const active = Object.values(docFilters).some(v => v !== "");
+
+  if (results.length === 0) {
+    box.innerHTML = `<div class="registry-empty">${active ? "No clients match these filters." : "No client profiles saved yet."}</div>`;
+    return;
+  }
+
+  box.innerHTML = `
+    <div style="font-size:12px; color:var(--ink-faint); margin-bottom:8px;">
+      ${results.length} client${results.length === 1 ? "" : "s"}${active ? " match these filters" : ""}
+    </div>
+    ${results.map(l => {
+      const n = docCount(l.id);
+      const paid = leadPaid(l);
+      return `
+        <div class="rank-row" style="align-items:center;">
+          <div class="rank-badge" style="background:${n ? "var(--gold-600)" : "#c3cad6"}; color:#fff; font-size:11px;">${n}</div>
+          <div style="flex:1; min-width:0;">
+            <div class="rank-name">${l.client_full_name}</div>
+            <div class="rank-sub">${l.package_destination || "No package"} · ${currency(l.deal_value)}${
+              l.travel_date ? " · travels " + fmtDate(l.travel_date) : ""}${
+              paid ? " · paid " + currency(paid) : ""}</div>
+          </div>
+          <button class="doc-open" data-lead="${l.id}" type="button"
+            style="padding:8px 14px; border:1px solid var(--line); border-radius:8px; background:#fff;
+            font-size:12.5px; font-weight:700; color:var(--navy-900); cursor:pointer; font-family:inherit; white-space:nowrap;">
+            ${n ? `Open ${n} document${n === 1 ? "" : "s"}` : "Open"}</button>
+        </div>`;
+    }).join("")}`;
+
+  box.querySelectorAll(".doc-open").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const sel = document.getElementById("voucherClientSelect");
+      if (!sel) return;
+      sel.value = btn.dataset.lead;
+      sel.dispatchEvent(new Event("change"));
+    });
+  });
+}
+
 function populateVoucherSelect(leads) {
   const sel = document.getElementById("voucherClientSelect");
   if (!sel) return;
   const withNames = leads.filter(l => l.client_full_name);
   sel.innerHTML = '<option value="">Choose a saved client profile…</option>' +
     withNames.map(l => `<option value="${l.id}">${l.client_full_name} — ${l.package_destination || "No package set"}</option>`).join("");
+  ensureDocSearch();
+  renderDocResults();
 }
 
 let selectedDocClient = null;
@@ -1195,6 +1575,8 @@ document.getElementById("doc_upload_btn")?.addEventListener("click", async (e) =
     fileEl.value = "";
     document.getElementById("doc_notes").value = "";
     await loadClientDocuments(selectedDocClient.id);
+    await loadDocIndex();   // keep the search result counts honest
+    renderDocResults();
   }
   setTimeout(() => (btn.textContent = "Upload Document"), 1800);
 });
@@ -1444,6 +1826,19 @@ async function saveClientProfile(btn, label, syncToHubspot) {
 document.getElementById("cp_save_draft")?.addEventListener("click", (e) => saveClientProfile(e.target, "Save draft", false));
 document.getElementById("cp_save_sync")?.addEventListener("click", (e) => saveClientProfile(e.target, "Save Client Profile & Sync to HubSpot", true));
 
+// The Team Dashboard pills in index.html have no "All" option, so there's no
+// way to see the full history. Add one rather than edit index.html.
+(function addTeamAllPill() {
+  const group = document.getElementById("teamPeriodPills");
+  if (!group || group.querySelector('[data-range="all"]')) return;
+  const custom = group.querySelector('[data-range="custom"]');
+  const pill = document.createElement("button");
+  pill.className = "pill";
+  pill.dataset.range = "all";
+  pill.textContent = "All";
+  group.insertBefore(pill, custom);
+})();
+
 // ---------- Filter pills ----------
 // Each pill carries data-range in index.html; that is what drives filtering.
 document.querySelectorAll("#teamPeriodPills .pill").forEach(p => {
@@ -1649,36 +2044,118 @@ async function loadApprovals() {
   const list = document.getElementById("approvalsList");
   if (!list || !currentProfile) return;
 
-  const [leaves, clientReqs] = await Promise.all([
-    supabaseClient.from("leave_requests").select("*").eq("agent_id", currentProfile.id).order("created_at", { ascending: false }),
-    supabaseClient.from("client_approval_requests").select("*").eq("agent_id", currentProfile.id).order("created_at", { ascending: false }),
-  ]);
+  // Admins get everyone's requests to decide on; everyone else gets their own.
+  const isAdmin = currentProfile.role === "admin";
+  const leaveQ = supabaseClient.from("leave_requests").select("*").order("created_at", { ascending: false });
+  const clientQ = supabaseClient.from("client_approval_requests").select("*").order("created_at", { ascending: false });
+  const pwQ = supabaseClient.from("password_change_requests").select("*").order("created_at", { ascending: false });
+  if (!isAdmin) {
+    leaveQ.eq("agent_id", currentProfile.id);
+    clientQ.eq("agent_id", currentProfile.id);
+    pwQ.eq("agent_id", currentProfile.id);
+  }
+  const [leaves, clientReqs, pwReqs] = await Promise.all([leaveQ, clientQ, pwQ]);
 
   const items = [
     ...(leaves.data || []).map(r => ({
-      kind: "Leave", title: r.leave_type, sub: `${r.start_date || "?"} → ${r.end_date || "?"}`, status: r.status || "Pending", created: r.created_at,
+      table: "leave_requests", id: r.id, kind: "Leave", agent: r.agent_id,
+      title: r.leave_type, sub: `${r.start_date || "?"} → ${r.end_date || "?"}${r.reason ? " · " + r.reason : ""}`,
+      status: r.status || "Pending", created: r.created_at, decidedBy: r.decided_by, decidedAt: r.decided_at,
     })),
     ...(clientReqs.data || []).map(r => ({
-      kind: "Client Request", title: r.client_full_name || "Unnamed client", sub: `${r.package_name || "—"} · ${r.original_travel_date || "?"} → ${r.new_travel_date || "?"}`, status: r.status || "Pending", created: r.created_at,
+      table: "client_approval_requests", id: r.id, kind: "Client Request", agent: r.agent_id,
+      title: r.client_full_name || "Unnamed client",
+      sub: `${r.package_name || "—"} · ${r.number_of_persons || 1} pax · ${r.original_travel_date || "?"} → ${r.new_travel_date || "?"}${r.context ? " · " + r.context : ""}`,
+      status: r.status || "Pending", created: r.created_at, decidedBy: r.decided_by, decidedAt: r.decided_at,
+    })),
+    ...(pwReqs.data || []).filter(r => r.status !== "Used").map(r => ({
+      table: "password_change_requests", id: r.id, kind: "Password", agent: r.agent_id,
+      title: "Password change", sub: r.reason || "No reason given",
+      status: r.status || "Pending", created: r.created_at, decidedBy: r.decided_by, decidedAt: r.decided_at,
     })),
   ].sort((a, b) => new Date(b.created) - new Date(a.created));
 
+  // Update the card heading so an admin knows this is a queue, not a log.
+  const head = list.closest(".card")?.querySelector(".card-title-row");
+  if (head) {
+    const h2 = head.querySelector("h2");
+    const p = head.querySelector("p");
+    const pending = items.filter(i => (i.status || "Pending") === "Pending").length;
+    if (h2) h2.textContent = isAdmin ? "Approval Queue" : "My Approval Requests";
+    if (p) p.textContent = isAdmin
+      ? `${pending} pending decision${pending === 1 ? "" : "s"} across the team`
+      : "Status of everything you've submitted";
+  }
+
   if (items.length === 0) {
-    list.innerHTML = '<div class="registry-empty">No approval requests submitted yet.</div>';
+    list.innerHTML = `<div class="registry-empty">${isAdmin ? "No requests from anyone yet." : "No approval requests submitted yet."}</div>`;
     return;
   }
 
-  list.innerHTML = items.map(it => `
-    <div class="rank-row">
-      <div class="rank-badge" style="background:${it.kind === "Leave" ? "var(--navy-900)" : "var(--gold-600)"}; color:#fff;">${it.kind === "Leave" ? "L" : "C"}</div>
-      <div>
-        <div class="rank-name">${it.title}</div>
-        <div class="rank-sub">${it.kind} · ${it.sub}</div>
-      </div>
-      <div class="rank-metrics">
-        <div><div class="m-label">Status</div><div class="m-value">${it.status}</div></div>
-      </div>
-    </div>`).join("");
+  const chip = status => {
+    const c = status === "Approved" ? "#2e8b57" : status === "Declined" ? "#b42318" : "#c9a227";
+    return `<span style="display:inline-block; padding:3px 10px; border-radius:999px; font-size:11px;
+      font-weight:700; background:${c}1a; color:${c};">${status}</span>`;
+  };
+
+  list.innerHTML = items.map(it => {
+    const pending = (it.status || "Pending") === "Pending";
+    const decided = it.decidedAt
+      ? `<div style="font-size:11px; color:var(--ink-faint); margin-top:4px;">by ${agentName(it.decidedBy)} · ${fmtDate(it.decidedAt)}</div>`
+      : "";
+    return `
+      <div class="rank-row" style="align-items:center;">
+        <div class="rank-badge" style="background:${it.kind === "Leave" ? "var(--navy-900)" : it.kind === "Password" ? "#6b5bc4" : "var(--gold-600)"}; color:#fff;">${it.kind === "Leave" ? "L" : it.kind === "Password" ? "P" : "C"}</div>
+        <div style="flex:1; min-width:0;">
+          <div class="rank-name">${it.title}</div>
+          <div class="rank-sub">${isAdmin ? agentName(it.agent) + " · " : ""}${it.kind} · ${it.sub}</div>
+        </div>
+        <div style="text-align:right;">
+          ${chip(it.status)}
+          ${decided}
+        </div>
+        ${isAdmin && pending ? `
+          <div style="display:flex; gap:6px; margin-left:14px;">
+            <button class="decide-btn" data-table="${it.table}" data-id="${it.id}" data-decision="Approved" type="button"
+              style="padding:7px 13px; border:none; border-radius:7px; background:#2e8b57; color:#fff;
+              font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">Approve</button>
+            <button class="decide-btn" data-table="${it.table}" data-id="${it.id}" data-decision="Declined" type="button"
+              style="padding:7px 13px; border:1px solid #b42318; border-radius:7px; background:#fff; color:#b42318;
+              font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">Decline</button>
+          </div>` : ""}
+      </div>`;
+  }).join("");
+
+  list.querySelectorAll(".decide-btn").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const decision = btn.dataset.decision;
+      // Declining someone's leave without a reason is a bad look; ask for one.
+      const note = decision === "Declined"
+        ? prompt("Reason for declining (the agent will see this):")
+        : null;
+      if (decision === "Declined" && note === null) return; // cancelled
+
+      const row = btn.closest(".rank-row");
+      row.querySelectorAll(".decide-btn").forEach(b => { b.disabled = true; b.style.opacity = "0.5"; });
+      btn.textContent = "Saving…";
+
+      const { error } = await supabaseClient.from(btn.dataset.table).update({
+        status: decision,
+        decided_by: currentProfile.id,
+        decided_at: new Date().toISOString(),
+        decision_note: note || null,
+      }).eq("id", btn.dataset.id);
+
+      if (error) {
+        btn.textContent = "Failed — retry";
+        row.querySelectorAll(".decide-btn").forEach(b => { b.disabled = false; b.style.opacity = ""; });
+        return;
+      }
+      await loadApprovals();
+      await loadMyPwRequest();
+      renderPasswordPanel();
+    });
+  });
 }
 
 (function setDates() {
