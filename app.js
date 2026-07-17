@@ -58,8 +58,8 @@ let currentProfile = null;     // { id, full_name, role }
 let allLeadsCache = [];
 let allProfilesCache = [];
 let allScorecardsCache = [];
-let currentPeriod = "all";     // driven by the Team Dashboard pills
-let currentLeadFilter = "all"; // driven by the Leads Tracker pills
+let currentPeriod = "today";    // Team Dashboard pills (matches the active pill)
+let currentLeadFilter = "today"; // Leads Tracker pills
 
 // ---------- Lead maths ----------
 // Every number on every dashboard comes from these helpers, so a change
@@ -77,19 +77,48 @@ function leadIsActive(l) {
   return l.journey_stage !== BOOKED_STAGE && l.journey_stage !== LOST_STAGE;
 }
 
-function periodStart(period) {
-  const now = new Date();
-  if (period === "today") return new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  if (period === "week") { const d = new Date(now); d.setDate(d.getDate() - 7); return d; }
-  if (period === "month") return new Date(now.getFullYear(), now.getMonth(), 1);
-  if (period === "quarter") { const d = new Date(now); d.setDate(d.getDate() - 90); return d; }
-  return null; // "all"
+// ---------- Date ranges ----------
+// The pills in index.html carry data-range="today|yesterday|y2|all|custom".
+// "y2" is Yesterday + Today. "custom" reads the From/To boxes beside them.
+function rangeFor(range, fromInput, toInput) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const shift = n => { const d = new Date(today); d.setDate(d.getDate() + n); return d; };
+  const endOf = d => { const x = new Date(d); x.setHours(23, 59, 59, 999); return x; };
+
+  if (range === "today") return { start: today, end: endOf(today) };
+  if (range === "yesterday") return { start: shift(-1), end: endOf(shift(-1)) };
+  if (range === "y2") return { start: shift(-1), end: endOf(today) };
+  if (range === "custom") {
+    return {
+      start: fromInput?.value ? new Date(fromInput.value + "T00:00:00") : null,
+      end: toInput?.value ? new Date(toInput.value + "T23:59:59") : null,
+    };
+  }
+  return { start: null, end: null }; // "all"
 }
 
-function leadsInPeriod(leads, period) {
-  const start = periodStart(period);
-  if (!start) return leads;
-  return leads.filter(l => l.created_at && new Date(l.created_at) >= start);
+function inRange(date, { start, end }) {
+  if (!date) return false;
+  if (start && date < start) return false;
+  if (end && date > end) return false;
+  return true;
+}
+
+// A lead is dated by when the client inquired. Older records saved before
+// that field was filled in fall back to when the record was created.
+function leadDate(l) {
+  if (l.inquiry_date) return new Date(l.inquiry_date + "T00:00:00");
+  return l.created_at ? new Date(l.created_at) : null;
+}
+
+function currentMonthRange() {
+  const now = new Date();
+  return { start: new Date(now.getFullYear(), now.getMonth(), 1), end: null };
+}
+
+function dateInputs(viewId) {
+  const els = document.querySelectorAll(`#${viewId} .date-range input[type="date"]`);
+  return { from: els[0], to: els[1] };
 }
 
 // Commission is all-or-nothing: clear the threshold and the whole month's
@@ -98,11 +127,24 @@ function commissionOn(netSales) {
   return netSales >= COMMISSION_THRESHOLD ? netSales * COMMISSION_RATE : 0;
 }
 
-// Commission always follows the calendar month, whatever period the
-// dashboard pills are showing, because that is when the target resets.
+// Commission always follows the calendar month, whatever range the pills
+// are showing, because that is when the target resets.
 function monthlyNetSales(agentId) {
-  return leadsInPeriod(allLeadsCache.filter(l => l.agent_id === agentId), "month")
-    .reduce((sum, l) => sum + leadPaid(l), 0);
+  const month = currentMonthRange();
+  return allLeadsCache
+    .filter(l => l.agent_id === agentId)
+    .reduce((sum, l) => sum + (l.payments || [])
+      .filter(p => p.date && inRange(new Date(p.date + "T00:00:00"), month))
+      .reduce((s, p) => s + (Number(p.amount) || 0), 0), 0);
+}
+
+// Money actually collected within a date range, counted by payment date.
+function netSalesInRange(agentId, range) {
+  return allLeadsCache
+    .filter(l => !agentId || l.agent_id === agentId)
+    .reduce((sum, l) => sum + (l.payments || [])
+      .filter(p => p.date && inRange(new Date(p.date + "T00:00:00"), range))
+      .reduce((s, p) => s + (Number(p.amount) || 0), 0), 0);
 }
 
 // The rate every head earns once the day's tier is reached.
@@ -128,14 +170,18 @@ function paxByDay(leads) {
 }
 
 // Each day is scored on its own, then the qualifying days are added up.
-function bonusForAgent(agentId, period) {
-  const start = periodStart(period);
+function bonusForAgent(agentId, range) {
   let total = 0;
   paxByDay(allLeadsCache.filter(l => l.agent_id === agentId)).forEach((pax, day) => {
-    if (start && new Date(day + "T00:00:00") < start) return;
+    if (!inRange(new Date(day + "T00:00:00"), range)) return;
     total += pax * bonusPerHead(pax);
   });
   return total;
+}
+
+// Passengers whose deposit landed on one specific day.
+function paxOnDay(agentId, isoDay) {
+  return paxByDay(allLeadsCache.filter(l => l.agent_id === agentId)).get(isoDay) || 0;
 }
 
 // Roll a set of leads up into the figures the dashboards display.
@@ -273,8 +319,25 @@ async function loadProfiles() {
   const optionsHtml = allProfilesCache.map(p => `<option value="${p.id}">${p.full_name}</option>`).join("");
   const sel = document.getElementById("consultantSelect");
   if (sel) { sel.innerHTML = optionsHtml; if (currentProfile) sel.value = currentProfile.id; }
+
   const cpSel = document.getElementById("cp_consultant");
-  if (cpSel) { cpSel.innerHTML = optionsHtml; if (currentProfile) cpSel.value = currentProfile.id; }
+  if (cpSel && currentProfile) {
+    cpSel.innerHTML = optionsHtml;
+    cpSel.value = currentProfile.id;
+    // Assigning a lead hands over ownership, so only admins and sales
+    // admins may do it. Agents stay locked to their own name.
+    if (currentProfile.role === "agent") {
+      cpSel.disabled = true;
+      const field = cpSel.closest(".form-field");
+      const label = field?.querySelector("label");
+      if (label && !label.dataset.locked) {
+        label.dataset.locked = "1";
+        label.textContent = "Assigned consultant (you)";
+      }
+    } else {
+      cpSel.disabled = false;
+    }
+  }
 }
 
 async function loadLeads() {
@@ -296,6 +359,8 @@ async function loadScorecards() {
 
 // Redraws every derived view. Safe to call before the data arrives.
 function renderAll() {
+  renderTeamStats();
+  renderAgentStats();
   renderRanking();
   renderAgentPerformance();
   renderTeamFunnel();
@@ -305,19 +370,27 @@ function renderAll() {
 }
 
 // ---------- Daily Sales Ranking ----------
+// This card is a single-day ranking, driven by the "Ranking date" box.
 function renderRanking() {
   const list = document.getElementById("rankingList");
   if (!list) return;
 
-  const scoped = leadsInPeriod(allLeadsCache, currentPeriod);
+  const dateEl = document.getElementById("rankDate");
+  const day = dateEl?.value || new Date().toISOString().slice(0, 10);
+  const dayRange = { start: new Date(day + "T00:00:00"), end: new Date(day + "T23:59:59") };
 
-  const rows = allProfilesCache
-    .map(p => {
-      const s = summarise(scoped.filter(l => l.agent_id === p.id));
-      const monthNet = monthlyNetSales(p.id);
-      return { profile: p, ...s, monthNet, commission: commissionOn(monthNet), bonus: bonusForAgent(p.id, currentPeriod) };
-    })
-    .sort((a, b) => b.netSales - a.netSales || b.pax - a.pax);
+  const rows = allProfilesCache.map(p => {
+    const pax = paxOnDay(p.id, day);
+    const monthNet = monthlyNetSales(p.id);
+    return {
+      profile: p,
+      netSales: netSalesInRange(p.id, dayRange),
+      pax,
+      bonus: pax * bonusPerHead(pax),
+      monthNet,
+      commission: commissionOn(monthNet),
+    };
+  }).sort((a, b) => b.netSales - a.netSales || b.pax - a.pax);
 
   if (rows.length === 0) {
     list.innerHTML = '<div class="registry-empty">No employees found.</div>';
@@ -329,10 +402,10 @@ function renderRanking() {
       <div class="rank-badge">${i + 1}</div>
       <div>
         <div class="rank-name">${r.profile.full_name}</div>
-        <div class="rank-sub">${r.booked} booked · ${r.active} active · ${
+        <div class="rank-sub">${
           r.monthNet >= COMMISSION_THRESHOLD
-            ? "commission earned this month"
-            : shortCurrency(COMMISSION_THRESHOLD - r.monthNet) + " more to qualify"
+            ? "commission unlocked this month"
+            : shortCurrency(COMMISSION_THRESHOLD - r.monthNet) + " more this month to unlock commission"
         }</div>
       </div>
       <div class="rank-metrics">
@@ -349,7 +422,8 @@ function renderAgentPerformance() {
   const grid = document.getElementById("agentPerfGrid");
   if (!grid) return;
 
-  const scoped = leadsInPeriod(allLeadsCache, currentPeriod);
+  const range = rangeFor(currentPeriod, dateInputs("view-team").from, dateInputs("view-team").to);
+  const scoped = allLeadsCache.filter(l => inRange(leadDate(l), range));
 
   grid.innerHTML = allProfilesCache.map(p => {
     const s = summarise(scoped.filter(l => l.agent_id === p.id));
@@ -391,7 +465,56 @@ function drawFunnel(targetId, leads) {
 }
 
 function renderTeamFunnel() {
-  drawFunnel("funnelGrid", leadsInPeriod(allLeadsCache, currentPeriod));
+  const range = rangeFor(currentPeriod, dateInputs("view-team").from, dateInputs("view-team").to);
+  drawFunnel("funnelGrid", allLeadsCache.filter(l => inRange(leadDate(l), range)));
+}
+
+// ---------- Stat cards ----------
+// The cards in index.html have no ids, so each one is found by its label.
+function setStat(viewId, labelText, value) {
+  document.querySelectorAll(`#${viewId} .stat-card`).forEach(card => {
+    const label = card.querySelector(".label");
+    if (label && label.textContent.trim().toLowerCase() === labelText.toLowerCase()) {
+      const v = card.querySelector(".value");
+      if (v) v.textContent = value;
+    }
+  });
+}
+
+function renderTeamStats() {
+  const range = rangeFor(currentPeriod, dateInputs("view-team").from, dateInputs("view-team").to);
+  const scoped = allLeadsCache.filter(l => inRange(leadDate(l), range));
+  const s = summarise(scoped);
+
+  const teamCommission = allProfilesCache
+    .reduce((sum, p) => sum + commissionOn(monthlyNetSales(p.id)), 0);
+  const teamBonus = allProfilesCache
+    .reduce((sum, p) => sum + bonusForAgent(p.id, range), 0);
+
+  setStat("view-team", "Total Leads", s.leads);
+  setStat("view-team", "Open Follow-ups", s.active);
+  setStat("view-team", "Pax Closed", s.pax);
+  setStat("view-team", "Net Sales Collection", currency(netSalesInRange(null, range)));
+  setStat("view-team", "Unlocked Commission", currency(teamCommission));
+  setStat("view-team", "Daily Bonuses", currency(teamBonus));
+
+  // Team average score in the banner
+  const scored = allProfilesCache.map(p => averageScore(p.id)).filter(v => v !== null);
+  const avg = scored.length ? Math.round(scored.reduce((a, b) => a + b, 0) / scored.length) : 0;
+  const bannerValue = document.querySelector("#view-team .banner-stat .value");
+  if (bannerValue) bannerValue.innerHTML = `${avg}<span> /100</span>`;
+}
+
+function renderAgentStats() {
+  if (!currentProfile) return;
+  const today = new Date().toISOString().slice(0, 10);
+  const dayRange = { start: new Date(today + "T00:00:00"), end: new Date(today + "T23:59:59") };
+  const pax = paxOnDay(currentProfile.id, today);
+
+  setStat("view-agent", "Net sales (today)", currency(netSalesInRange(currentProfile.id, dayRange)));
+  setStat("view-agent", "Pax closed", pax);
+  setStat("view-agent", "Daily bonus", currency(pax * bonusPerHead(pax)));
+  setStat("view-agent", "Commission", currency(commissionOn(monthlyNetSales(currentProfile.id))));
 }
 
 function renderAgentFunnel() {
@@ -423,21 +546,44 @@ function renderUrgentAlerts() {
 }
 
 // ---------- Leads Tracker ----------
+let leadSearch = "";
+let leadAgentFilter = "all";
+let leadSort = { key: "inquiry", dir: "desc" };
+let leadPage = 1;
+const LEADS_PER_PAGE = 10;
+
 function filteredLeads() {
-  const leads = [...allLeadsCache];
-  const f = currentLeadFilter;
-  if (f === "all") return leads;
-  if (f === "hot" || f === "warm" || f === "cold") {
-    return leads.filter(l => (l.lead_temperature || "").toLowerCase().includes(f));
+  const { from, to } = dateInputs("view-leads");
+  const range = rangeFor(currentLeadFilter, from, to);
+  let leads = allLeadsCache.filter(l => inRange(leadDate(l), range));
+
+  if (leadAgentFilter !== "all") {
+    leads = leads.filter(l => l.agent_id === leadAgentFilter);
   }
-  if (f === "booked") return leads.filter(leadIsBooked);
-  if (f === "active") return leads.filter(leadIsActive);
-  if (f === "overdue") {
-    const now = new Date();
-    return leads.filter(l => l.next_followup && new Date(l.next_followup) < now && leadIsActive(l));
+
+  const q = leadSearch.trim().toLowerCase();
+  if (q) {
+    leads = leads.filter(l =>
+      [l.client_full_name, l.client_mobile, l.package_destination, agentName(l.agent_id)]
+        .some(v => (v || "").toLowerCase().includes(q))
+    );
   }
-  if (f === "mine" && currentProfile) return leads.filter(l => l.agent_id === currentProfile.id);
-  return leads;
+
+  const val = l => ({
+    inquiry: leadDate(l)?.getTime() || 0,
+    name: (l.client_full_name || "").toLowerCase(),
+    travel: l.travel_date ? new Date(l.travel_date + "T00:00:00").getTime() : 0,
+    pax: Number(l.travelers) || 0,
+    contact: (l.client_mobile || "").toLowerCase(),
+    agent: agentName(l.agent_id).toLowerCase(),
+  })[leadSort.key];
+
+  return leads.sort((a, b) => {
+    const x = val(a), y = val(b);
+    if (x < y) return leadSort.dir === "asc" ? -1 : 1;
+    if (x > y) return leadSort.dir === "asc" ? 1 : -1;
+    return 0;
+  });
 }
 
 function stageColour(stage) {
@@ -446,87 +592,221 @@ function stageColour(stage) {
   return "var(--navy-900)";
 }
 
+function fmtDate(value) {
+  if (!value) return "—";
+  const d = value.length <= 10 ? new Date(value + "T00:00:00") : new Date(value);
+  return isNaN(d) ? "—" : d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+function exportLeadsCsv() {
+  const rows = filteredLeads();
+  const head = ["Date of inquiry", "Client's name", "Travel date", "No. of persons", "Contact no.", "Agent", "Package", "Stage", "Deal value", "Paid", "Balance"];
+  const esc = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const body = rows.map(l => {
+    const paid = leadPaid(l);
+    const value = Number(l.deal_value) || 0;
+    return [
+      fmtDate(l.inquiry_date || l.created_at), l.client_full_name, fmtDate(l.travel_date),
+      Number(l.travelers) || 0, l.client_mobile, agentName(l.agent_id),
+      l.package_destination, l.journey_stage, value, paid, Math.max(value - paid, 0),
+    ].map(esc).join(",");
+  });
+  const csv = [head.map(esc).join(","), ...body].join("\n");
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `discover-group-leads-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// The search box, consultant filter and Export button aren't in index.html,
+// so they're built once here and kept — rebuilding them would drop focus
+// mid-keystroke.
+function ensureLeadsControls(box) {
+  const seesEveryone = currentProfile && currentProfile.role !== "agent";
+
+  if (!document.getElementById("leadsControls")) {
+    const titleRow = box.querySelector(".card-title-row");
+    if (!titleRow) return;
+
+    const count = titleRow.querySelector("span");
+    if (count) count.style.display = "none"; // the footer reports the count now
+
+    const controls = document.createElement("div");
+    controls.id = "leadsControls";
+    controls.style.cssText = "display:flex; gap:10px; align-items:center; margin-left:auto; flex-wrap:wrap;";
+    controls.innerHTML = `
+      <select id="leadAgentSelect" style="padding:9px 14px; border:1px solid var(--line); border-radius:999px;
+        font-size:13px; font-family:inherit; background:#fff; color:var(--navy-900); display:none;"></select>
+      <input id="leadSearchInput" type="search" placeholder="Search leads…"
+        style="padding:9px 14px; border:1px solid var(--line); border-radius:999px; font-size:13px; min-width:210px; font-family:inherit;">
+      <button id="leadExportBtn" class="pill" type="button">↓ Export</button>`;
+    titleRow.appendChild(controls);
+
+    document.getElementById("leadSearchInput").addEventListener("input", (e) => {
+      leadSearch = e.target.value;
+      leadPage = 1;
+      renderLeadsTable();
+    });
+    document.getElementById("leadExportBtn").addEventListener("click", exportLeadsCsv);
+    document.getElementById("leadAgentSelect").addEventListener("change", (e) => {
+      leadAgentFilter = e.target.value;
+      leadPage = 1;
+      renderLeadsTable();
+    });
+  }
+
+  // Only the people who can see the whole team get a consultant filter —
+  // for an agent it would only ever have their own name in it.
+  const agentSel = document.getElementById("leadAgentSelect");
+  if (!agentSel) return;
+  agentSel.style.display = seesEveryone ? "" : "none";
+  if (!seesEveryone) return;
+
+  const wanted = ['<option value="all">All consultants</option>']
+    .concat(allProfilesCache.map(p => `<option value="${p.id}">${p.full_name}</option>`)).join("");
+  if (agentSel.innerHTML !== wanted) {
+    agentSel.innerHTML = wanted;
+    agentSel.value = leadAgentFilter;
+  }
+}
+
+function sortHeader(label, key, align) {
+  const active = leadSort.key === key;
+  const arrow = active ? (leadSort.dir === "asc" ? "↑" : "↓") : "↓";
+  return `<th class="lead-sort" data-key="${key}" style="padding:10px 12px; text-align:${align || "left"};
+    font-size:11px; letter-spacing:.06em; text-transform:uppercase; cursor:pointer; white-space:nowrap;
+    color:${active ? "var(--navy-900)" : "var(--ink-soft)"}; border-bottom:1px solid rgba(0,0,0,.08);"
+    >${label} <span style="opacity:${active ? 1 : 0.35};">${arrow}</span></th>`;
+}
+
 function renderLeadsTable() {
   const box = document.querySelector("#view-leads .card:last-child");
   if (!box) return;
-  const countLabel = box.querySelector("span");
   const empty = box.querySelector(".registry-empty");
   if (!empty) return;
 
-  // The table gets its own container, so the original empty-state div can
-  // simply be hidden and shown again when a filter returns nothing.
+  ensureLeadsControls(box);
+
+  const seesEveryone = currentProfile && currentProfile.role !== "agent";
+  const sub = box.querySelector(".card-title-row p");
+  const owner = document.getElementById("leadsOwner");
+  if (seesEveryone) {
+    const picked = leadAgentFilter !== "all" ? agentName(leadAgentFilter) : null;
+    if (owner) owner.textContent = picked ? `${picked}'s Leads` : "Central Leads Tracker";
+    if (sub) sub.textContent = picked ? "Filtered to one consultant" : "Every lead, all consultants";
+  } else if (sub) {
+    sub.textContent = "Personal records only";
+  }
+
   let wrap = document.getElementById("leadsTableWrap");
   if (!wrap) {
     wrap = document.createElement("div");
     wrap.id = "leadsTableWrap";
-    wrap.style.overflowX = "auto";
     wrap.style.marginTop = "8px";
     empty.parentNode.insertBefore(wrap, empty.nextSibling);
   }
 
-  const leads = filteredLeads();
-  if (countLabel) countLabel.textContent = leads.length + " record" + (leads.length === 1 ? "" : "s");
-
-  if (leads.length === 0) {
+  const all = filteredLeads();
+  if (all.length === 0) {
     wrap.innerHTML = "";
     empty.style.display = "block";
-    empty.textContent = "No leads match this filter yet. Save a client profile to see it here.";
+    // Name whichever filter is actually responsible, so nobody hunts for
+    // leads that a stale consultant filter is hiding.
+    const bits = [];
+    if (leadSearch) bits.push(`matching "${leadSearch}"`);
+    if (leadAgentFilter !== "all") bits.push(`for ${agentName(leadAgentFilter)}`);
+    empty.textContent = bits.length
+      ? `No leads ${bits.join(" ")} in this date range.`
+      : "No leads found for this date range.";
     return;
   }
   empty.style.display = "none";
 
-  const now = new Date();
-  const th = "padding:10px 12px; text-align:left; font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-soft); border-bottom:1px solid rgba(0,0,0,.08); white-space:nowrap;";
-  const td = "padding:12px; font-size:13px; border-bottom:1px solid rgba(0,0,0,.05); vertical-align:middle;";
+  const pages = Math.max(1, Math.ceil(all.length / LEADS_PER_PAGE));
+  if (leadPage > pages) leadPage = pages;
+  const start = (leadPage - 1) * LEADS_PER_PAGE;
+  const leads = all.slice(start, start + LEADS_PER_PAGE);
+
+  const td = "padding:14px 12px; font-size:13.5px; border-bottom:1px solid rgba(0,0,0,.05); vertical-align:middle; color:var(--ink-soft);";
 
   wrap.innerHTML = `
-    <table style="width:100%; border-collapse:collapse; min-width:940px;">
-      <thead>
-        <tr>
-          <th style="${th}">Client</th>
-          <th style="${th}">Package</th>
-          <th style="${th}">Travel date</th>
-          <th style="${th}">Stage</th>
-          <th style="${th}">Consultant</th>
-          <th style="${th} text-align:right;">Deal value</th>
-          <th style="${th} text-align:right;">Paid</th>
-          <th style="${th} text-align:right;">Balance</th>
-          <th style="${th}">Next follow-up</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${leads.map(l => {
-          const paid = leadPaid(l);
-          const value = Number(l.deal_value) || 0;
-          const balance = Math.max(value - paid, 0);
-          const late = l.next_followup && new Date(l.next_followup) < now && leadIsActive(l);
-          return `
-            <tr class="lead-row" data-lead="${l.id}" style="cursor:pointer;">
-              <td style="${td}">
-                <div style="font-weight:600; color:var(--navy-900);">${l.client_full_name || "Unnamed client"}</div>
-                <div style="font-size:11px; color:var(--ink-soft);">${l.client_mobile || l.client_email || "No contact saved"}</div>
-              </td>
-              <td style="${td}">${l.package_destination || "—"}</td>
-              <td style="${td}">${l.travel_date || "—"}</td>
-              <td style="${td}">
-                <span style="display:inline-block; padding:3px 9px; border-radius:999px; font-size:11px; font-weight:600; color:#fff; background:${stageColour(l.journey_stage)};">${l.journey_stage || "—"}</span>
-              </td>
+    <div style="overflow-x:auto;">
+      <table style="width:100%; border-collapse:collapse; min-width:860px;">
+        <thead>
+          <tr>
+            ${sortHeader("Date of inquiry", "inquiry")}
+            ${sortHeader("Client's name", "name")}
+            ${sortHeader("Travel date", "travel")}
+            ${sortHeader("No. of persons", "pax", "center")}
+            ${sortHeader("Contact no.", "contact")}
+            ${sortHeader("Agent", "agent")}
+            <th style="padding:10px 12px; text-align:left; font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-soft); border-bottom:1px solid rgba(0,0,0,.08); white-space:nowrap;">Company profile</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${leads.map(l => `
+            <tr>
+              <td style="${td}">${fmtDate(l.inquiry_date || l.created_at)}</td>
+              <td style="${td} font-weight:600; color:var(--navy-900);">${l.client_full_name || "Unnamed client"}</td>
+              <td style="${td}">${fmtDate(l.travel_date)}</td>
+              <td style="${td} text-align:center;">${Number(l.travelers) || 0}</td>
+              <td style="${td}">${l.client_mobile || "—"}</td>
               <td style="${td}">${agentName(l.agent_id)}</td>
-              <td style="${td} text-align:right;">${currency(value)}</td>
-              <td style="${td} text-align:right;">${currency(paid)}</td>
-              <td style="${td} text-align:right; font-weight:600; color:${balance > 0 ? "var(--navy-900)" : "var(--gold-600)"};">${currency(balance)}</td>
-              <td style="${td} ${late ? "color:#b42318; font-weight:600;" : ""}">${l.next_followup ? new Date(l.next_followup).toLocaleDateString() : "—"}${late ? " · overdue" : ""}</td>
-            </tr>`;
-        }).join("")}
-      </tbody>
-    </table>`;
+              <td style="${td}">
+                <button class="lead-open" data-lead="${l.id}" type="button"
+                  style="padding:8px 14px; border:1px solid var(--line); border-radius:8px; background:#fff;
+                  font-size:12.5px; font-weight:700; color:var(--navy-900); cursor:pointer; font-family:inherit; white-space:nowrap;">
+                  Complete Profile</button>
+              </td>
+            </tr>`).join("")}
+        </tbody>
+      </table>
+    </div>
 
-  // Clicking a row opens that client over in Client's Documents.
-  wrap.querySelectorAll(".lead-row").forEach(row => {
-    row.addEventListener("click", () => {
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:18px; padding-top:16px; border-top:1px solid var(--line);">
+      <div style="font-size:13px; color:var(--ink-faint);">
+        Showing ${start + 1} to ${start + leads.length} of ${all.length} record${all.length === 1 ? "" : "s"}
+      </div>
+      <div style="display:flex; gap:6px; align-items:center;" id="leadPager">
+        <button class="lead-page" data-page="${leadPage - 1}" ${leadPage === 1 ? "disabled" : ""} type="button"
+          style="width:32px; height:32px; border:1px solid var(--line); border-radius:8px; background:#fff; cursor:${leadPage === 1 ? "not-allowed" : "pointer"}; opacity:${leadPage === 1 ? 0.4 : 1};">‹</button>
+        ${Array.from({ length: pages }, (_, i) => i + 1).map(n => `
+          <button class="lead-page" data-page="${n}" type="button"
+            style="min-width:32px; height:32px; border:1px solid ${n === leadPage ? "var(--navy-900)" : "var(--line)"};
+            border-radius:8px; background:${n === leadPage ? "var(--navy-900)" : "#fff"};
+            color:${n === leadPage ? "#fff" : "var(--ink-soft)"}; font-weight:600; font-size:13px; cursor:pointer; font-family:inherit;">${n}</button>`).join("")}
+        <button class="lead-page" data-page="${leadPage + 1}" ${leadPage === pages ? "disabled" : ""} type="button"
+          style="width:32px; height:32px; border:1px solid var(--line); border-radius:8px; background:#fff; cursor:${leadPage === pages ? "not-allowed" : "pointer"}; opacity:${leadPage === pages ? 0.4 : 1};">›</button>
+      </div>
+    </div>
+
+    <div style="margin-top:18px; padding:14px 16px; background:#f4f6fa; border-radius:10px; border:1px solid var(--line);">
+      <div style="font-size:13px; font-weight:700; color:var(--navy-900); margin-bottom:2px;">ⓘ Quick Guide</div>
+      <div style="font-size:12.5px; color:var(--ink-soft);">Click "Complete Profile" to view the full client profile, documents, and payment history.</div>
+    </div>`;
+
+  wrap.querySelectorAll(".lead-sort").forEach(th => {
+    th.addEventListener("click", () => {
+      const key = th.dataset.key;
+      leadSort = { key, dir: leadSort.key === key && leadSort.dir === "desc" ? "asc" : "desc" };
+      renderLeadsTable();
+    });
+  });
+
+  wrap.querySelectorAll(".lead-page").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const n = Number(btn.dataset.page);
+      if (n >= 1 && n <= pages) { leadPage = n; renderLeadsTable(); }
+    });
+  });
+
+  wrap.querySelectorAll(".lead-open").forEach(btn => {
+    btn.addEventListener("click", () => {
       const sel = document.getElementById("voucherClientSelect");
       if (!sel) return;
-      sel.value = row.dataset.lead;
+      sel.value = btn.dataset.lead;
       sel.dispatchEvent(new Event("change"));
       goToView("voucher");
     });
@@ -732,14 +1012,23 @@ async function buildClientProfilePayload() {
   const booking_confirmation_path = bookingFile ? await uploadDocument(bookingFile) : null;
   const payments = await collectPayments();
 
+  // The lead belongs to the consultant it's assigned to — not to whoever
+  // typed it in. That's what puts it in the right person's tracker, and
+  // what the database rules use to decide who may see it. Agents can only
+  // assign to themselves; admins and sales admins can assign to anyone.
+  const assigned = v("cp_consultant");
+  const canAssignOthers = currentProfile.role !== "agent";
+  const owner = (canAssignOthers && assigned) ? assigned : currentProfile.id;
+
   return {
-    agent_id: currentProfile.id,
+    agent_id: owner,
+    created_by: currentProfile.id,
+    assigned_consultant: owner,
     client_full_name: v("cp_fullname"),
     client_email: v("cp_email"),
     client_mobile: v("cp_mobile"),
     inquiry_date: v("cp_inquiry_date"),
     inquiry_time: v("cp_inquiry_time"),
-    assigned_consultant: v("cp_consultant"),
     emergency_contact_name: v("cp_emergency_name"),
     emergency_contact_phone: v("cp_emergency_phone"),
     client_address: v("cp_address"),
@@ -777,6 +1066,20 @@ async function buildClientProfilePayload() {
 
 async function saveClientProfile(btn, label, syncToHubspot) {
   if (!currentProfile) return;
+  // A second click while the first save is still running is what creates
+  // duplicate clients, so the button is dead until this finishes.
+  if (btn.disabled) return;
+  btn.disabled = true;
+  btn.style.opacity = "0.6";
+  btn.style.cursor = "not-allowed";
+
+  const release = () => {
+    btn.disabled = false;
+    btn.style.opacity = "";
+    btn.style.cursor = "";
+    btn.textContent = label;
+  };
+
   btn.textContent = "Uploading files…";
   const payload = await buildClientProfilePayload();
   btn.textContent = "Saving…";
@@ -784,7 +1087,7 @@ async function saveClientProfile(btn, label, syncToHubspot) {
 
   if (error) {
     btn.textContent = "Error — try again";
-    setTimeout(() => (btn.textContent = label), 1800);
+    setTimeout(release, 1800);
     return;
   }
 
@@ -793,7 +1096,7 @@ async function saveClientProfile(btn, label, syncToHubspot) {
 
   if (!syncToHubspot) {
     btn.textContent = "Saved ✓";
-    setTimeout(() => (btn.textContent = label), 1500);
+    setTimeout(release, 1500);
     return;
   }
 
@@ -802,39 +1105,20 @@ async function saveClientProfile(btn, label, syncToHubspot) {
     body: payload,
   });
   btn.textContent = syncError || syncResult?.error ? "Saved, but HubSpot sync failed" : "Saved & synced ✓";
-  setTimeout(() => (btn.textContent = label), 2200);
+  setTimeout(release, 2200);
 }
 
 document.getElementById("cp_save_draft")?.addEventListener("click", (e) => saveClientProfile(e.target, "Save draft", false));
 document.getElementById("cp_save_sync")?.addEventListener("click", (e) => saveClientProfile(e.target, "Save Client Profile & Sync to HubSpot", true));
 
 // ---------- Filter pills ----------
-// The pill's own text decides what it filters, so renaming a pill in
-// index.html keeps working without touching this file.
-function pillKey(el) {
-  const explicit = el.dataset.period || el.dataset.filter;
-  if (explicit) return explicit.toLowerCase();
-  const t = (el.textContent || "").trim().toLowerCase();
-  if (t.includes("today")) return "today";
-  if (t.includes("week")) return "week";
-  if (t.includes("month")) return "month";
-  if (t.includes("quarter")) return "quarter";
-  if (t.includes("hot")) return "hot";
-  if (t.includes("warm")) return "warm";
-  if (t.includes("cold")) return "cold";
-  if (t.includes("booked")) return "booked";
-  if (t.includes("overdue")) return "overdue";
-  if (t.includes("active")) return "active";
-  if (t.includes("mine") || t.includes("my ")) return "mine";
-  return "all";
-}
-
+// Each pill carries data-range in index.html; that is what drives filtering.
 document.querySelectorAll("#teamPeriodPills .pill").forEach(p => {
   p.addEventListener("click", () => {
     document.querySelectorAll("#teamPeriodPills .pill").forEach(x => x.classList.remove("active"));
     p.classList.add("active");
-    currentPeriod = pillKey(p);
-    renderRanking();
+    currentPeriod = p.dataset.range || "all";
+    renderTeamStats();
     renderAgentPerformance();
     renderTeamFunnel();
   });
@@ -844,10 +1128,34 @@ document.querySelectorAll("#leadPills .pill").forEach(p => {
   p.addEventListener("click", () => {
     document.querySelectorAll("#leadPills .pill").forEach(x => x.classList.remove("active"));
     p.classList.add("active");
-    currentLeadFilter = pillKey(p);
+    currentLeadFilter = p.dataset.range || "all";
+    leadPage = 1;
     renderLeadsTable();
   });
 });
+
+// Typing in a From/To box switches that panel to Custom automatically.
+document.querySelectorAll("#view-team .date-range input[type='date']").forEach(el => {
+  el.addEventListener("change", () => {
+    document.querySelectorAll("#teamPeriodPills .pill").forEach(x =>
+      x.classList.toggle("active", x.dataset.range === "custom"));
+    currentPeriod = "custom";
+    renderTeamStats();
+    renderAgentPerformance();
+    renderTeamFunnel();
+  });
+});
+
+document.querySelectorAll("#view-leads .date-range input[type='date']").forEach(el => {
+  el.addEventListener("change", () => {
+    document.querySelectorAll("#leadPills .pill").forEach(x =>
+      x.classList.toggle("active", x.dataset.range === "custom"));
+    currentLeadFilter = "custom";
+    renderLeadsTable();
+  });
+});
+
+document.getElementById("rankDate")?.addEventListener("change", renderRanking);
 
 document.querySelectorAll("#compliancePills .pill").forEach(p => {
   p.addEventListener("click", () => {
