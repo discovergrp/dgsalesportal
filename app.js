@@ -1047,6 +1047,10 @@ function renderAgentDashboard() {
     sel.value = b.dataset.lead;
     sel.dispatchEvent(new Event("change"));
     goToView("voucher");
+    setTimeout(() => {
+      document.getElementById("voucherCard")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 60);
   }));
 }
 
@@ -1449,6 +1453,10 @@ function renderLeadsTable() {
       sel.value = btn.dataset.lead;
       sel.dispatchEvent(new Event("change"));
       goToView("voucher");
+      setTimeout(() => {
+        document.getElementById("voucherCard")
+          ?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 60);
     });
   });
 
@@ -1622,11 +1630,19 @@ function renderDocResults() {
     return;
   }
 
+  // With hundreds of clients an unbounded list buries everything below it,
+  // including the record you just opened. Show a workable slice and let the
+  // filters do the narrowing.
+  const LIMIT = 25;
+  const shown = results.slice(0, LIMIT);
+  const hidden = results.length - shown.length;
+
   box.innerHTML = `
     <div style="font-size:12px; color:var(--ink-faint); margin-bottom:8px;">
-      ${results.length} client${results.length === 1 ? "" : "s"}${active ? " match these filters" : ""}
+      ${results.length} client${results.length === 1 ? "" : "s"}${active ? " match these filters" : ""}${
+        hidden > 0 ? ` · showing the first ${LIMIT} — search or filter to narrow` : ""}
     </div>
-    ${results.map(l => {
+    ${shown.map(l => {
       const n = docCount(l.id);
       const paid = leadPaid(l);
       return `
@@ -1651,6 +1667,12 @@ function renderDocResults() {
       if (!sel) return;
       sel.value = btn.dataset.lead;
       sel.dispatchEvent(new Event("change"));
+      // The client's card renders below the results list, so without this it
+      // opens somewhere off-screen and looks like nothing happened.
+      setTimeout(() => {
+        document.getElementById("voucherCard")
+          ?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 60);
     });
   });
 }
