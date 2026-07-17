@@ -1036,6 +1036,67 @@ function wireResources() {
   });
 }
 
+// ---------- Deleting a lead ----------
+// Only admins and sales admins reach this — the database enforces that too.
+// Deleting removes the client, their documents and their payment history,
+// so the confirmation asks for the name to be typed rather than a lazy OK.
+async function deleteLead(leadId) {
+  const lead = allLeadsCache.find(l => l.id === leadId);
+  if (!lead) return;
+
+  const name = lead.client_full_name || "this unnamed client";
+  const paid = leadPaid(lead);
+  const warning = [
+    `Delete ${name}?`,
+    "",
+    "This removes the client profile, every uploaded document, and all payment records.",
+    paid ? `⚠ ${currency(paid)} of recorded payments will be erased, and any commission or bonus based on it will change.` : "",
+    "This cannot be undone.",
+    "",
+    `Type the client's name to confirm:`,
+  ].filter(Boolean).join("\n");
+
+  const typed = prompt(warning);
+  if (typed === null) return;
+  if (typed.trim().toLowerCase() !== (lead.client_full_name || "").trim().toLowerCase()) {
+    alert("That name doesn't match. Nothing was deleted.");
+    return;
+  }
+
+  // Database rows cascade, but the files in storage don't — collect and
+  // remove them first, or they linger in the bucket forever.
+  const paths = [];
+  if (lead.booking_confirmation_path) paths.push(lead.booking_confirmation_path);
+  (lead.payments || []).forEach(p => { if (p.receipt_path) paths.push(p.receipt_path); });
+
+  const { data: docs } = await supabaseClient
+    .from("client_documents").select("file_path").eq("lead_id", leadId);
+  (docs || []).forEach(d => { if (d.file_path) paths.push(d.file_path); });
+
+  if (paths.length) {
+    const { error: rmError } = await supabaseClient.storage.from(DOCS_BUCKET).remove(paths);
+    // A storage failure shouldn't block the delete, but it should be visible.
+    if (rmError) console.warn("Some files could not be removed:", rmError.message);
+  }
+
+  const { error } = await supabaseClient.from("leads").delete().eq("id", leadId);
+  if (error) {
+    alert("Couldn't delete that lead — " + error.message);
+    return;
+  }
+
+  if (selectedDocClient?.id === leadId) {
+    selectedDocClient = null;
+    document.getElementById("voucherEmpty").style.display = "block";
+    document.getElementById("voucherCard").style.display = "none";
+  }
+
+  await loadLeads();
+  await loadDocIndex();
+  renderAll();
+  renderDocResults();
+}
+
 // ---------- Urgent Admin Attention ----------
 function renderUrgentAlerts() {
   const list = document.getElementById("urgentAlertsList");
@@ -1269,10 +1330,16 @@ function renderLeadsTable() {
               <td style="${td}">${l.client_mobile || "—"}</td>
               <td style="${td}">${agentName(l.agent_id)}</td>
               <td style="${td}">
-                <button class="lead-open" data-lead="${l.id}" type="button"
-                  style="padding:8px 14px; border:1px solid var(--line); border-radius:8px; background:#fff;
-                  font-size:12.5px; font-weight:700; color:var(--navy-900); cursor:pointer; font-family:inherit; white-space:nowrap;">
-                  Complete Profile</button>
+                <div style="display:flex; gap:6px;">
+                  <button class="lead-open" data-lead="${l.id}" type="button"
+                    style="padding:8px 14px; border:1px solid var(--line); border-radius:8px; background:#fff;
+                    font-size:12.5px; font-weight:700; color:var(--navy-900); cursor:pointer; font-family:inherit; white-space:nowrap;">
+                    Complete Profile</button>
+                  ${seesEveryone ? `
+                    <button class="lead-delete" data-lead="${l.id}" type="button" title="Delete this lead"
+                      style="padding:8px 11px; border:1px solid var(--line); border-radius:8px; background:#fff;
+                      font-size:12.5px; font-weight:700; color:#b42318; cursor:pointer; font-family:inherit;">Delete</button>` : ""}
+                </div>
               </td>
             </tr>`).join("")}
         </tbody>
@@ -1324,6 +1391,10 @@ function renderLeadsTable() {
       sel.dispatchEvent(new Event("change"));
       goToView("voucher");
     });
+  });
+
+  wrap.querySelectorAll(".lead-delete").forEach(btn => {
+    btn.addEventListener("click", () => deleteLead(btn.dataset.lead));
   });
 }
 
