@@ -289,29 +289,45 @@ function renderVoucher(l) {
   if (docsEl) docsEl.innerHTML = docLinks.length ? docLinks.join(" · ") : "No files attached";
 }
 
-// ---------- Client Profile: payment installment rows (1–15) ----------
+// ---------- Client Profile: payment installment rows (add up to 15, one at a time) ----------
+let paymentRowCount = 0;
+const MAX_PAYMENT_ROWS = 15;
+
+function addPaymentRow() {
+  if (paymentRowCount >= MAX_PAYMENT_ROWS) return;
+  paymentRowCount++;
+  const i = paymentRowCount;
+  const wrap = document.getElementById("paymentRows");
+  if (!wrap) return;
+  const row = document.createElement("div");
+  row.className = "rank-row";
+  row.style.alignItems = "flex-end";
+  row.innerHTML = `
+    <div class="rank-badge">${String(i).padStart(2, "0")}</div>
+    <div class="form-field" style="flex:1;"><label>Payment date</label><input type="date" class="pay-date" data-idx="${i}"></div>
+    <div class="form-field" style="flex:1;"><label>Amount</label><input type="number" class="pay-amount" data-idx="${i}" value="0"></div>
+    <div class="form-field" style="flex:1;">
+      <label>Payment method</label>
+      <select class="pay-method" data-idx="${i}">
+        <option value="">Select</option><option>Bank transfer</option><option>Credit card</option><option>Cash</option><option>GCash</option>
+      </select>
+    </div>
+    <div class="form-field" style="flex:1;"><label>Receipt / deposit slip</label><input type="file" class="pay-receipt" data-idx="${i}"></div>`;
+  wrap.appendChild(row);
+
+  const btn = document.getElementById("addPaymentBtn");
+  if (btn) btn.style.display = paymentRowCount >= MAX_PAYMENT_ROWS ? "none" : "inline-block";
+}
+
 function renderPaymentRows() {
   const wrap = document.getElementById("paymentRows");
   if (!wrap) return;
   wrap.innerHTML = "";
-  for (let i = 1; i <= 15; i++) {
-    const row = document.createElement("div");
-    row.className = "rank-row";
-    row.style.alignItems = "flex-end";
-    row.innerHTML = `
-      <div class="rank-badge">${String(i).padStart(2, "0")}</div>
-      <div class="form-field" style="flex:1;"><label>Payment date</label><input type="date" class="pay-date" data-idx="${i}"></div>
-      <div class="form-field" style="flex:1;"><label>Amount</label><input type="number" class="pay-amount" data-idx="${i}" value="0"></div>
-      <div class="form-field" style="flex:1;">
-        <label>Payment method</label>
-        <select class="pay-method" data-idx="${i}">
-          <option value="">Select</option><option>Bank transfer</option><option>Credit card</option><option>Cash</option><option>GCash</option>
-        </select>
-      </div>
-      <div class="form-field" style="flex:1;"><label>Receipt / deposit slip</label><input type="file" class="pay-receipt" data-idx="${i}"></div>`;
-    wrap.appendChild(row);
-  }
+  paymentRowCount = 0;
+  addPaymentRow(); // start with just one row visible
 }
+
+document.getElementById("addPaymentBtn")?.addEventListener("click", addPaymentRow);
 renderPaymentRows();
 
 const DOCS_BUCKET = "client-documents";

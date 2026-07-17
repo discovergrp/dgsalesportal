@@ -60,7 +60,6 @@
     <nav class="nav" id="nav">
       <button data-view="team" class="active">Team Dashboard</button>
       <button data-view="client">Client Profile</button>
-      <button data-view="folders">Digital Travel Folders</button>
       <button data-view="leads">Leads Tracker</button>
       <button data-view="agent">Agent Dashboard</button>
       <button data-view="approvals">Approvals</button>
@@ -277,6 +276,7 @@
         <p style="font-size:13px; color:var(--ink-soft); margin-top:10px;">Attach the signed booking confirmation once the client registers. Payment records below support up to fifteen installments.</p>
 
         <div id="paymentRows" style="margin-top:12px;"></div>
+        <button class="pill" id="addPaymentBtn" type="button" style="margin-top:14px;">+ Add another payment</button>
 
         <div class="section-title">Visa service, discounts &amp; client considerations</div>
         <div class="form-grid">
@@ -324,31 +324,6 @@
           <button class="btn-primary" id="cp_save_draft" type="button" style="width:auto; padding:11px 22px; background:#eef1f6; color:var(--navy-900); box-shadow:none;">Save draft</button>
           <button class="btn-primary" id="cp_save_sync" type="button" style="width:auto; padding:11px 22px;">Save Client Profile &amp; Sync to HubSpot</button>
         </div>
-      </div>
-    </section>
-
-    <!-- ---------- DIGITAL TRAVEL FOLDERS ---------- -->
-    <section class="view" id="view-folders">
-      <div class="banner">
-        <div>
-          <div class="eyebrow-line">One Client • One Record • Every Department</div>
-          <h2>Digital Travel Folders</h2>
-          <p>Each traveler record connects sales, finance, visa, booking, and customer service without duplicate encoding.</p>
-        </div>
-        <div class="banner-stat"><div class="value">0<span> folders</span></div><div class="label">Unified client records</div></div>
-      </div>
-
-      <div class="stat-grid">
-        <div class="stat-card"><div class="label">Active Sales Journeys</div><div class="value">0</div><div class="hint">Not yet booked or lost</div></div>
-        <div class="stat-card"><div class="label">Booked Clients</div><div class="value">0</div><div class="hint">Ready for department handoff</div></div>
-        <div class="stat-card"><div class="label">With Payments</div><div class="value">0</div><div class="hint">Finance records attached</div></div>
-        <div class="stat-card"><div class="label">Visa Service</div><div class="value">0</div><div class="hint">Visa assistance availed</div></div>
-      </div>
-
-      <div class="card">
-        <h2 style="margin:0 0 2px; font-size:17px; color:var(--navy-900);">Unified Client Registry</h2>
-        <p style="margin:0; font-size:13px; color:var(--ink-soft);">Shared source of truth for every authorized department</p>
-        <div class="registry-empty">No matching client records yet.</div>
       </div>
     </section>
 
