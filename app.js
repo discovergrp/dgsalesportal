@@ -241,15 +241,77 @@ function populateVoucherSelect(leads) {
     withNames.map(l => `<option value="${l.id}">${l.client_full_name} — ${l.package_destination || "No package set"}</option>`).join("");
 }
 
+let selectedDocClient = null;
+
 document.getElementById("voucherClientSelect")?.addEventListener("change", (e) => {
   const lead = allLeadsCache.find(l => l.id === e.target.value);
   const empty = document.getElementById("voucherEmpty");
   const card = document.getElementById("voucherCard");
-  if (!lead) { empty.style.display = "block"; card.style.display = "none"; return; }
+  if (!lead) { selectedDocClient = null; empty.style.display = "block"; card.style.display = "none"; return; }
+  selectedDocClient = lead;
   empty.style.display = "none";
   card.style.display = "block";
   renderVoucher(lead);
+  loadClientDocuments(lead.id);
 });
+
+// ---------- Client's Documents: upload + library ----------
+document.getElementById("doc_upload_btn")?.addEventListener("click", async (e) => {
+  const btn = e.target;
+  if (!currentProfile || !selectedDocClient) return;
+  const fileEl = document.getElementById("doc_file");
+  const file = fileEl?.files?.[0];
+  if (!file) { btn.textContent = "Choose a file first"; setTimeout(() => (btn.textContent = "Upload Document"), 1500); return; }
+
+  btn.textContent = "Uploading…";
+  const path = await uploadDocument(file);
+  if (!path) { btn.textContent = "Upload failed — try again"; setTimeout(() => (btn.textContent = "Upload Document"), 2000); return; }
+
+  const { error } = await supabaseClient.from("client_documents").insert({
+    lead_id: selectedDocClient.id,
+    agent_id: currentProfile.id,
+    doc_type: document.getElementById("doc_type").value,
+    direction: document.getElementById("doc_direction").value,
+    notes: document.getElementById("doc_notes").value || null,
+    file_name: file.name,
+    file_path: path,
+  });
+
+  btn.textContent = error ? "Error saving record" : "Uploaded ✓";
+  if (!error) {
+    fileEl.value = "";
+    document.getElementById("doc_notes").value = "";
+    await loadClientDocuments(selectedDocClient.id);
+  }
+  setTimeout(() => (btn.textContent = "Upload Document"), 1800);
+});
+
+async function loadClientDocuments(leadId) {
+  const list = document.getElementById("docLibraryList");
+  if (!list) return;
+  const { data: docs, error } = await supabaseClient
+    .from("client_documents")
+    .select("*")
+    .eq("lead_id", leadId)
+    .order("created_at", { ascending: false });
+
+  if (error || !docs || docs.length === 0) {
+    list.innerHTML = '<div class="registry-empty">No documents uploaded yet for this client.</div>';
+    return;
+  }
+
+  list.innerHTML = docs.map(d => `
+    <div class="rank-row">
+      <div class="rank-badge" style="background:${d.direction === "Submitted by client" ? "var(--gold-600)" : "var(--navy-900)"}; color:#fff; font-size:10px;">${d.direction === "Submitted by client" ? "IN" : "OUT"}</div>
+      <div>
+        <div class="rank-name">${d.doc_type}</div>
+        <div class="rank-sub">${d.file_name}${d.notes ? " · " + d.notes : ""}</div>
+      </div>
+      <div class="rank-metrics">
+        <div><div class="m-label">${d.direction}</div><div class="m-value"><a href="#" onclick="viewDocument('${d.file_path}'); return false;">View</a></div></div>
+      </div>
+    </div>`).join("");
+}
 
 function renderVoucher(l) {
   const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val || "—"; };

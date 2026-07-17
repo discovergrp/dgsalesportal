@@ -58,15 +58,18 @@
     </div>
 
     <nav class="nav" id="nav">
+      <div class="nav-section-label" style="border-top:none; padding-top:0; margin-top:4px;">Dashboards</div>
       <button data-view="team" class="active">Team Dashboard</button>
+      <button data-view="agent">Agent Dashboard</button>
+
+      <div class="nav-section-label">Client Management</div>
       <button data-view="client">Client Profile</button>
       <button data-view="leads">Leads Tracker</button>
-      <button data-view="agent">Agent Dashboard</button>
+      <button data-view="voucher">Client's Documents</button>
+
+      <div class="nav-section-label">My Workspace</div>
       <button data-view="approvals">Approvals</button>
       <button data-view="scorecard">Daily Scorecard</button>
-      <button data-view="voucher">Digital Voucher</button>
-
-      <div class="nav-section-label">Compliance</div>
       <button data-view="compliance">Compliance Record</button>
 
       <div class="nav-section-label">Resources</div>
@@ -484,8 +487,8 @@
       <div class="view-head">
         <div>
           <div class="eyebrow-line">Discover Group Sales OS</div>
-          <h1>Digital Voucher</h1>
-          <p>Auto-generated from an existing Client Profile record</p>
+          <h1>Client's Documents</h1>
+          <p>All documents submitted by the client and issued to the client, in one place</p>
         </div>
         <div class="date-pill">Thursday, July 16, 2026</div>
       </div>
@@ -498,13 +501,56 @@
       </div>
 
       <div id="voucherEmpty" class="card" style="margin-top:20px; text-align:center; color:var(--ink-faint); padding:50px 0;">
-        Select a client above to generate their voucher.
+        Select a client above to view and manage their documents.
       </div>
 
       <div id="voucherCard" style="display:none; margin-top:20px;">
+
+        <div class="card" style="margin-bottom:20px;">
+          <h3 style="margin:0 0 4px; font-size:16px; color:var(--navy-900);">Upload a document for this client</h3>
+          <p style="margin:0 0 16px; font-size:13px; color:var(--ink-soft);">Flight tickets, hotel &amp; transportation vouchers, entrance fees, booking confirmations, deposit slips, and any other client documents</p>
+          <div class="form-grid">
+            <div class="form-field">
+              <label>Document type</label>
+              <select id="doc_type">
+                <option>Flight Ticket</option>
+                <option>Hotel Voucher</option>
+                <option>Transportation Voucher</option>
+                <option>Entrance Fees / Tickets</option>
+                <option>Booking Confirmation</option>
+                <option>Deposit Slip / Receipt</option>
+                <option>Visa Document</option>
+                <option>Client-Submitted Document</option>
+                <option>Other</option>
+              </select>
+            </div>
+            <div class="form-field">
+              <label>Direction</label>
+              <select id="doc_direction">
+                <option>Issued to client</option>
+                <option>Submitted by client</option>
+              </select>
+            </div>
+            <div class="form-field"><label>File</label><input type="file" id="doc_file"></div>
+          </div>
+          <div class="form-field" style="margin-top:16px;">
+            <label>Notes (optional)</label>
+            <input type="text" id="doc_notes" placeholder="e.g. Round trip MNL–NRT, e-ticket for all 4 pax">
+          </div>
+          <div style="display:flex; justify-content:flex-end; margin-top:16px;">
+            <button class="btn-primary" id="doc_upload_btn" type="button" style="width:auto; padding:11px 22px;">Upload Document</button>
+          </div>
+        </div>
+
+        <div class="card" style="margin-bottom:20px;">
+          <h3 style="margin:0 0 4px; font-size:16px; color:var(--navy-900);">Document library</h3>
+          <p style="margin:0 0 8px; font-size:13px; color:var(--ink-soft);">Everything on file for this client</p>
+          <div id="docLibraryList"><div class="registry-empty">No documents uploaded yet for this client.</div></div>
+        </div>
+
         <div class="banner">
           <div>
-            <div class="eyebrow-line">Discover Group Travel Voucher</div>
+            <div class="eyebrow-line">Booking Summary</div>
             <h2 id="v_destination">—</h2>
             <p id="v_refline">—</p>
           </div>
