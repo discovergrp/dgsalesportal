@@ -80,7 +80,8 @@ async function loadProfileAndEnter(userId) {
 
 function enterWorkspace(name, role) {
   document.getElementById("sidebarName").textContent = name;
-  document.querySelector(".role-pill").textContent = role === "admin" ? "Team Lead" : "Sales Agent";
+  const ROLE_LABELS = { admin: "Team Lead", sales_admin: "Admin Assistant of Sales", agent: "Sales Agent" };
+  document.querySelector(".role-pill").textContent = ROLE_LABELS[role] || "Sales Agent";
   document.getElementById("agentSub").textContent = "Individual performance for " + name;
   document.getElementById("scorecardSub").textContent = "Daily scorecard for " + name;
   document.getElementById("leadsOwner").textContent = name + "'s Leads Tracker";
