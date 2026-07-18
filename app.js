@@ -2419,7 +2419,32 @@ function leadProblems(l) {
       && new Date(l.travel_date) < new Date(l.inquiry_date)) {
     out.push("Travel date is before the inquiry date");
   }
+  if (isDuplicateLead(l)) out.push("Possible duplicate — same name or email as another lead. Not deleted; please review.");
   return out;
+}
+
+// A lead is a possible duplicate if another lead (not the slots import, not
+// itself) shares its name or email. Nothing is deleted — this only flags.
+let _dupNameMap = null, _dupEmailMap = null;
+function rebuildDuplicateIndex() {
+  _dupNameMap = new Map();
+  _dupEmailMap = new Map();
+  for (const l of allLeadsCache) {
+    if (isSlotsImport(l)) continue;
+    const nm = (l.client_full_name || "").trim().toLowerCase();
+    const em = (l.client_email || "").trim().toLowerCase();
+    if (nm) _dupNameMap.set(nm, (_dupNameMap.get(nm) || 0) + 1);
+    if (em && em !== "n/a") _dupEmailMap.set(em, (_dupEmailMap.get(em) || 0) + 1);
+  }
+}
+function isDuplicateLead(l) {
+  if (isSlotsImport(l)) return false;
+  if (!_dupNameMap) rebuildDuplicateIndex();
+  const nm = (l.client_full_name || "").trim().toLowerCase();
+  const em = (l.client_email || "").trim().toLowerCase();
+  if (nm && (_dupNameMap.get(nm) || 0) > 1) return true;
+  if (em && em !== "n/a" && (_dupEmailMap.get(em) || 0) > 1) return true;
+  return false;
 }
 
 const FLAG_RED = "#b42318";
@@ -2584,6 +2609,7 @@ function sortHeader(label, key, align) {
 }
 
 function renderLeadsTable() {
+  rebuildDuplicateIndex();
   const box = document.querySelector("#view-leads .card:last-child");
   if (!box) return;
   const empty = box.querySelector(".registry-empty");
@@ -2662,7 +2688,7 @@ function renderLeadsTable() {
           ${leads.map(l => `
             <tr>
               <td style="${td}">${fmtDate(l.inquiry_date || l.created_at)}</td>
-              <td style="${td} font-weight:600; color:var(--navy-900);">${l.client_full_name || "Unnamed client"}</td>
+              <td style="${td} font-weight:600; color:${isDuplicateLead(l) ? FLAG_RED : "var(--navy-900)"};">${l.client_full_name || "Unnamed client"}${isDuplicateLead(l) ? ' <span style="font-size:10.5px; font-weight:700;">⚠ dup</span>' : ""}</td>
               <td style="${td}">${fmtDateFlagged(l.travel_date)}</td>
               <td style="${td} text-align:center;">${Number(l.travelers) || 0}</td>
               <td style="${td}">${l.client_mobile || "—"}</td>
@@ -3348,7 +3374,7 @@ function renderCriteria() {
     ).join("");
     item.innerHTML = `
       <div>
-        <h4>${c.title}</h4>
+        <h4>${c.title} <span style="font-size:12px; font-weight:700; color:var(--gold-600);">/ ${c.max} pts</span></h4>
         <p>${c.desc}</p>
       </div>
       <div class="criteria-score">
