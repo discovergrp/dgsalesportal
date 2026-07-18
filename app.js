@@ -1707,7 +1707,10 @@ async function saveProfileEdits(leadId) {
     return;
   }
 
-  await loadLeads();
+  // Patch the cached copy directly rather than re-downloading every lead,
+  // which is what made saving an edit feel slow.
+  const idx = allLeadsCache.findIndex(l => l.id === leadId);
+  if (idx !== -1) allLeadsCache[idx] = { ...allLeadsCache[idx], ...patch };
   await loadDepartures();
   renderAll();
   openClientProfile(leadId);   // back to the read-only view, now updated
@@ -3151,7 +3154,8 @@ async function saveClientProfile(btn, label, syncToHubspot) {
   btn.textContent = "Uploading files…";
   const payload = await buildClientProfilePayload();
   btn.textContent = "Saving…";
-  const { error } = await supabaseClient.from("leads").insert(payload);
+  const { data: inserted, error } = await supabaseClient
+    .from("leads").insert(payload).select().single();
 
   if (error) {
     btn.textContent = "Error — try again";
@@ -3159,8 +3163,13 @@ async function saveClientProfile(btn, label, syncToHubspot) {
     return;
   }
 
-  await loadLeads();
-  renderAll();
+  // Add the new lead to the cache directly instead of re-fetching all 1000+
+  // rows — that round trip is what made saving feel slow.
+  if (inserted) {
+    allLeadsCache.unshift(inserted);
+    populateVoucherSelect(allLeadsCache);
+    renderAll();
+  }
 
   if (!syncToHubspot) {
     btn.textContent = "Saved ✓";
@@ -3168,12 +3177,15 @@ async function saveClientProfile(btn, label, syncToHubspot) {
     return;
   }
 
-  btn.textContent = "Syncing to HubSpot…";
-  const { data: syncResult, error: syncError } = await supabaseClient.functions.invoke("hubspot-sync", {
-    body: payload,
-  });
-  btn.textContent = syncError || syncResult?.error ? "Saved, but HubSpot sync failed" : "Saved & synced ✓";
-  setTimeout(release, 2200);
+  // The HubSpot sync runs in the background — the profile is already saved,
+  // so there's no reason to make the person wait on an external service.
+  btn.textContent = "Saved ✓ · syncing HubSpot…";
+  supabaseClient.functions.invoke("hubspot-sync", { body: payload })
+    .then(({ data, error: syncError }) => {
+      btn.textContent = (syncError || data?.error) ? "Saved · HubSpot sync failed" : "Saved & synced ✓";
+    })
+    .catch(() => { btn.textContent = "Saved · HubSpot sync failed"; })
+    .finally(() => setTimeout(release, 1500));
 }
 
 document.getElementById("cp_save_draft")?.addEventListener("click", (e) => saveClientProfile(e.target, "Save draft", false));
