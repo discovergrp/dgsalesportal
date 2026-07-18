@@ -65,6 +65,13 @@ let currentLeadFilter = "today"; // Leads Tracker pills
 // Every number on every dashboard comes from these helpers, so a change
 // here flows through the cards, the ranking, the funnel and the table.
 
+// Slots-sheet clients are historical closed sales, imported for the Slots
+// Tracker. Everywhere that shows *current* sales work — the Leads Tracker,
+// the Agent Dashboard, the funnel — filters them out with this.
+function isSlotsImport(l) {
+  return typeof l.lead_source === "string" && l.lead_source.startsWith("Slots sheet import");
+}
+
 function leadPaid(l) {
   return (l.payments || []).reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
 }
@@ -560,7 +567,7 @@ function renderAgentPerformance() {
   if (!grid) return;
 
   const range = rangeFor(currentPeriod, dateInputs("view-team").from, dateInputs("view-team").to);
-  const scoped = allLeadsCache.filter(l => inRange(leadDate(l), range));
+  const scoped = allLeadsCache.filter(l => !isSlotsImport(l) && inRange(leadDate(l), range));
 
   grid.innerHTML = allProfilesCache.map(p => {
     const s = summarise(scoped.filter(l => l.agent_id === p.id));
@@ -603,7 +610,7 @@ function drawFunnel(targetId, leads) {
 
 function renderTeamFunnel() {
   const range = rangeFor(currentPeriod, dateInputs("view-team").from, dateInputs("view-team").to);
-  drawFunnel("funnelGrid", allLeadsCache.filter(l => inRange(leadDate(l), range)));
+  drawFunnel("funnelGrid", allLeadsCache.filter(l => !isSlotsImport(l) && inRange(leadDate(l), range)));
 }
 
 // ---------- Stat cards ----------
@@ -620,7 +627,7 @@ function setStat(viewId, labelText, value) {
 
 function renderTeamStats() {
   const range = rangeFor(currentPeriod, dateInputs("view-team").from, dateInputs("view-team").to);
-  const scoped = allLeadsCache.filter(l => inRange(leadDate(l), range));
+  const scoped = allLeadsCache.filter(l => !isSlotsImport(l) && inRange(leadDate(l), range));
   const s = summarise(scoped);
 
   const teamCommission = allProfilesCache
@@ -706,7 +713,8 @@ function viewedProfile() {
 function myLeads(range) {
   const who = viewedProfile();
   if (!who) return [];
-  const theirs = allLeadsCache.filter(l => l.agent_id === who.id);
+  // Exclude historical slots imports so the dashboard reflects current work.
+  const theirs = allLeadsCache.filter(l => l.agent_id === who.id && !isSlotsImport(l));
   return range ? theirs.filter(l => inRange(leadDate(l), range)) : theirs;
 }
 
@@ -2239,7 +2247,11 @@ const LEADS_PER_PAGE = 10;
 function filteredLeads() {
   const { from, to } = dateInputs("view-leads");
   const range = rangeFor(currentLeadFilter, from, to);
-  let leads = allLeadsCache.filter(l => inRange(leadDate(l), range));
+  // Slots-sheet clients are historical closed sales that live in the Slots
+  // Tracker. The Leads Tracker is for current inquiries the team is working,
+  // so those imports are kept out of it.
+  let leads = allLeadsCache.filter(l =>
+    !isSlotsImport(l) && inRange(leadDate(l), range));
 
   if (leadAgentFilter !== "all") {
     leads = leads.filter(l => l.agent_id === leadAgentFilter);
