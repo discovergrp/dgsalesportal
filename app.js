@@ -2217,7 +2217,7 @@ function openDeparture(depId) {
                     <td style="${td} text-align:right; font-weight:600;">${currency(Math.max(val - paid, 0))}</td>
                     <td style="${td}"><button class="dep-client" data-lead="${l.id}" type="button"
                       style="padding:5px 11px; border:1px solid var(--line); border-radius:6px; background:#fff;
-                      font-size:12px; font-weight:600; color:var(--navy-900); cursor:pointer; font-family:inherit;">Open</button></td>
+                      font-size:12px; font-weight:600; color:var(--navy-900); cursor:pointer; font-family:inherit;">${canEditLead(l) ? "Edit" : "Open"}</button></td>
                   </tr>`;
               }).join("")}
             </tbody>
@@ -2240,8 +2240,14 @@ function openDeparture(depId) {
   const de = document.getElementById("depEdit");
   if (de) de.onclick = () => { close(); departureForm(d); };
   ov.querySelectorAll(".dep-client").forEach(b => b.addEventListener("click", () => {
+    const leadId = b.dataset.lead;
+    const lead = allLeadsCache.find(l => l.id === leadId);
     close();
-    openClientProfile(b.dataset.lead);
+    // Straight into the edit form for anyone allowed to edit; otherwise the
+    // read-only profile. Editing here updates the same record — it can't
+    // create a duplicate.
+    if (lead && canEditLead(lead)) editClientProfile(leadId);
+    else openClientProfile(leadId);
   }));
 }
 
