@@ -484,11 +484,22 @@ async function loadProfiles() {
 
 async function loadLeads() {
   if (!currentProfile) return;
-  const { data, error } = await supabaseClient
-    .from("leads")
-    .select("*")
-    .order("created_at", { ascending: false });
-  allLeadsCache = (!error && data) ? data : [];
+  // Supabase caps a single select at 1000 rows. With the slots import the
+  // table is well past that, so fetch in pages or the newest imports would
+  // push real leads off the end and they'd silently vanish from every view.
+  const PAGE = 1000;
+  let all = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabaseClient
+      .from("leads")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .range(from, from + PAGE - 1);
+    if (error) break;
+    all = all.concat(data || []);
+    if (!data || data.length < PAGE) break;   // last page reached
+  }
+  allLeadsCache = all;
   populateVoucherSelect(allLeadsCache);
 }
 
