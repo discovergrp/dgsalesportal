@@ -1843,10 +1843,15 @@ function renderSlots() {
 
   const list = filteredDepartures();
   const all = allDeparturesCache;
-  const totals = all.map(departureStats);
-  const seatsAvailable = totals.reduce((s, t) => s + Math.max(t.available, 0), 0);
-  const nearlyFull = totals.filter(t => t.status === "Nearly Full").length;
-  const overbooked = totals.filter(t => t.status === "Overbooked").length;
+  // The stat cards reflect whatever is currently filtered, so they always
+  // match the table beneath them.
+  const shown = list.map(departureStats);
+  const seatsAvailable = shown.reduce((s, t) => s + Math.max(t.available, 0), 0);
+  const nearlyFull = shown.filter(t => t.status === "Nearly Full").length;
+  const overbooked = shown.filter(t => t.status === "Overbooked").length;
+  const totalRevenue = shown.reduce((s, t) => s + t.revenue, 0);
+  const totalCollected = shown.reduce((s, t) => s + t.paid, 0);
+  const isFiltered = list.length !== all.length;
 
   const months = [...new Set(all.map(d => String(d.start_date).slice(0, 7)))].sort();
   const th = "padding:10px 12px; text-align:left; font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-faint); border-bottom:1px solid var(--line); white-space:nowrap;";
@@ -1855,11 +1860,23 @@ function renderSlots() {
   const unassigned = allLeadsCache.filter(l => !l.departure_id).length;
 
   body.innerHTML = `
-    <div class="stat-grid" style="grid-template-columns:repeat(4,1fr);">
-      ${slotStat("Total Departures", all.length, "On the schedule", "#4a6fb5")}
-      ${slotStat("Seats Available", seatsAvailable, "Across active routes", "#2e8b57")}
+    <div class="stat-grid" style="grid-template-columns:repeat(5,1fr);">
+      ${slotStat(isFiltered ? "Departures Shown" : "Total Departures", list.length, isFiltered ? `of ${all.length} total` : "On the schedule", "#4a6fb5")}
+      ${slotStat("Seats Available", seatsAvailable, "Across shown routes", "#2e8b57")}
       ${slotStat("Nearly Full", nearlyFull, "5 seats or fewer", "#c9a227")}
       ${slotStat("Overbooked", overbooked, "Needs immediate action", "#b42318")}
+      ${slotStat("Total Revenue", shortCurrency(totalRevenue),
+        totalCollected > 0 ? currency(totalCollected) + " collected" : (isFiltered ? "for shown departures" : "booked value, all departures"),
+        "#6b5bc4")}
+    </div>
+
+    <div style="margin:14px 0 0; padding:12px 16px; background:#f4f6fa; border:1px solid var(--line);
+      border-radius:10px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+      <span style="font-size:13px; color:var(--ink-soft);">
+        ${isFiltered ? "Filtered total" : "Grand total"} — ${list.length} departure${list.length === 1 ? "" : "s"},
+        ${shown.reduce((s, t) => s + t.occupied, 0)} seats taken
+      </span>
+      <span style="font-size:18px; font-weight:800; color:var(--navy-900);">${currency(totalRevenue)}</span>
     </div>
 
     <div class="card">
