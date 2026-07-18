@@ -37,12 +37,12 @@ const FUNNEL_STAGES = [
 
 const CRITERIA = [
   { title: "Lead Response Time", desc: "All new inquiries are answered within 30 minutes during 10:00 AM–7:00 PM.", max: 10 },
-  { title: "Personalized Client Engagement", desc: "Responses are natural, tailored, conversational, and never robotic or AI-like.", max: 20 },
+  { title: "Personalized Client Engagement", desc: "Responses are natural, tailored, conversational, and never robotic or AI-like.", max: 10 },
   { title: "Warm & Professional Client Experience", desc: "Communication builds trust through warmth, empathy, professionalism, and confidence.", max: 10 },
-  { title: "Strategic Follow-through & Follow-up Compliance", desc: "Every active lead is followed up within 24 hours using value-driven closing strategies.", max: 25 },
+  { title: "Strategic Follow-through & Follow-up Compliance", desc: "Every active lead is followed up within 24 hours using value-driven closing strategies.", max: 30 },
   { title: "Product Knowledge & Consultative Expertise", desc: "Information on packages, visas, itineraries, flights, and policies is accurate and confident.", max: 10 },
   { title: "CRM / Sales Tracker & Funnel Management", desc: "Every lead has complete records, correct stage, next action, strategy, and remarks.", max: 10 },
-  { title: "Sales Initiative & Opportunity Maximization", desc: "Consultant proactively offers alternatives, dates, packages, promotions, and upgrades.", max: 15 },
+  { title: "Sales Initiative & Opportunity Maximization", desc: "Consultant proactively offers alternatives, dates, packages, promotions, and upgrades.", max: 20 },
 ];
 
 const currency = n => "₱" + Number(n || 0).toLocaleString();
@@ -1528,8 +1528,20 @@ function editClientProfile(leadId) {
   const l = allLeadsCache.find(x => x.id === leadId);
   if (!l || !canEditLead(l)) return;
 
-  const overlay = document.getElementById("profileOverlay");
-  if (!overlay) return;
+  // Create the overlay if it isn't there yet. Opening Edit straight from the
+  // Slots Tracker skips openClientProfile, so the overlay may not exist.
+  let overlay = document.getElementById("profileOverlay");
+  if (!overlay) {
+    overlay = document.createElement("div");
+    overlay.id = "profileOverlay";
+    overlay.style.cssText = `position:fixed; inset:0; background:rgba(8,18,38,.55); z-index:9999;
+      display:flex; align-items:flex-start; justify-content:center; overflow-y:auto; padding:32px 20px;`;
+    document.body.appendChild(overlay);
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) closeClientProfile(); });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeClientProfile(); });
+  }
+  overlay.style.display = "flex";
+  document.body.style.overflow = "hidden";
 
   const canReassign = currentProfile.role !== "agent";
   const consultants = allProfilesCache
