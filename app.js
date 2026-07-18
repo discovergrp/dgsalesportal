@@ -1367,6 +1367,7 @@ function openClientProfile(leadId) {
         profileRow("Owned by", agentName(l.agent_id)),
         profileRow("Entered by", l.created_by ? agentName(l.created_by) : "—"),
         profileRow("Created", l.created_at ? new Date(l.created_at).toLocaleString() : null),
+        profileRow("Last edited by", l.updated_by ? agentName(l.updated_by) : "—"),
         profileRow("Last updated", l.updated_at ? new Date(l.updated_at).toLocaleString() : null),
       ].join(""), 4)}
 
@@ -1481,11 +1482,12 @@ function editGroup(title, inner, cols = 3) {
 
 // Receipts and booking files are left exactly as they are. Editing text
 // fields must never silently drop an uploaded receipt.
+// Payments are edited inline here so every department sees the same numbers.
+// Rows can be added or removed; receipt files are preserved untouched.
 function editPaymentRows(payments) {
-  const rows = (payments || []);
-  if (rows.length === 0) return '<div style="font-size:13px; color:var(--ink-faint);">No payments recorded. Add them from the Client Profile screen.</div>';
-  return rows.map((p, i) => `
-    <div style="display:grid; grid-template-columns:34px 1fr 1fr 1fr auto; gap:10px; align-items:end; margin-bottom:10px;">
+  const rows = (payments && payments.length) ? payments : [];
+  const rowHtml = (p, i) => `
+    <div class="ep-row" data-row="${i}" style="display:grid; grid-template-columns:28px 1fr 1fr 1fr auto 34px; gap:8px; align-items:end; margin-bottom:8px;">
       <div style="font-size:12px; font-weight:700; color:var(--ink-faint); padding-bottom:9px;">${String(i + 1).padStart(2, "0")}</div>
       ${editField("Date", `ep_date_${i}`, p.date, "date")}
       ${editField("Amount", `ep_amt_${i}`, Number(p.amount) || 0, "number")}
@@ -1495,7 +1497,31 @@ function editPaymentRows(payments) {
           ? `<a href="#" onclick="viewDocument('${p.receipt_path}'); return false;" style="color:var(--gold-600); font-weight:600;">Receipt</a>`
           : '<span style="color:var(--ink-faint);">No receipt</span>'}
       </div>
-    </div>`).join("");
+      <button type="button" class="ep-remove" data-row="${i}" title="Remove this payment"
+        style="padding-bottom:9px; background:none; border:none; color:#b42318; font-size:18px; cursor:pointer;">&times;</button>
+    </div>`;
+  return `
+    <div id="epRows">${rows.map(rowHtml).join("")}</div>
+    <button type="button" id="epAdd" style="margin-top:6px; padding:7px 13px; border:1px dashed var(--line);
+      border-radius:7px; background:#fff; font-size:12.5px; font-weight:600; color:var(--navy-900);
+      cursor:pointer; font-family:inherit;">+ Add payment</button>
+    <div style="font-size:11px; color:var(--ink-faint); margin-top:6px;">
+      Receipts stay attached to their row. Upload new receipt files from Client's Documents.</div>`;
+}
+
+// Read the payment rows currently on screen back into an array.
+function collectPaymentRows(existing) {
+  const rows = [];
+  document.querySelectorAll("#epRows .ep-row").forEach(el => {
+    const i = el.dataset.row;
+    const date = document.getElementById(`ep_date_${i}`)?.value || null;
+    const amount = Number(document.getElementById(`ep_amt_${i}`)?.value) || 0;
+    const method = document.getElementById(`ep_method_${i}`)?.value || null;
+    // Keep the original receipt path for this row if there was one.
+    const receipt = (existing && existing[Number(i)] && existing[Number(i)].receipt_path) || null;
+    if (date || amount || method) rows.push({ date, amount, method, receipt_path: receipt });
+  });
+  return rows;
 }
 
 function editClientProfile(leadId) {
@@ -1620,6 +1646,40 @@ function editClientProfile(leadId) {
   document.getElementById("editCancel").onclick = back;
   document.getElementById("editCancelX").onclick = back;
   document.getElementById("editSave").onclick = () => saveProfileEdits(leadId);
+
+  // Payment rows: add and remove, so payments are fully editable here.
+  wirePaymentEditor(leadId);
+}
+
+// Keeps the payment editor's add/remove working after any re-render.
+function wirePaymentEditor(leadId) {
+  const add = document.getElementById("epAdd");
+  const rowsBox = document.getElementById("epRows");
+  if (!rowsBox) return;
+
+  const bindRemovers = () => {
+    rowsBox.querySelectorAll(".ep-remove").forEach(b => b.onclick = () => {
+      b.closest(".ep-row").remove();
+    });
+  };
+  bindRemovers();
+
+  if (add) add.onclick = () => {
+    const i = "new" + Date.now();  // unique id for the fresh row
+    const div = document.createElement("div");
+    div.className = "ep-row";
+    div.dataset.row = i;
+    div.style.cssText = "display:grid; grid-template-columns:28px 1fr 1fr 1fr auto 34px; gap:8px; align-items:end; margin-bottom:8px;";
+    div.innerHTML = `
+      <div style="font-size:12px; font-weight:700; color:var(--ink-faint); padding-bottom:9px;">+</div>
+      ${editField("Date", `ep_date_${i}`, "", "date")}
+      ${editField("Amount", `ep_amt_${i}`, 0, "number")}
+      ${editSelect("Method", `ep_method_${i}`, "", ["", ...METHOD_OPTIONS])}
+      <div style="padding-bottom:9px; font-size:11px; color:var(--ink-faint);">New</div>
+      <button type="button" class="ep-remove" style="padding-bottom:9px; background:none; border:none; color:#b42318; font-size:18px; cursor:pointer;">&times;</button>`;
+    rowsBox.appendChild(div);
+    bindRemovers();
+  };
 }
 
 async function saveProfileEdits(leadId) {
@@ -1642,14 +1702,9 @@ async function saveProfileEdits(leadId) {
   btn.textContent = "Saving…";
   err.style.display = "none";
 
-  // Rebuild payments from the rows on screen, carrying each receipt path
-  // across untouched — those files aren't re-uploaded here.
-  const payments = (lead.payments || []).map((p, i) => ({
-    date: document.getElementById(`ep_date_${i}`)?.value || null,
-    amount: Number(document.getElementById(`ep_amt_${i}`)?.value) || 0,
-    method: document.getElementById(`ep_method_${i}`)?.value || null,
-    receipt_path: p.receipt_path ?? null,
-  }));
+  // Rebuild payments from the rows on screen — including any the user added
+  // or removed — carrying each receipt path across untouched.
+  const payments = collectPaymentRows(lead.payments || []);
 
   const owner = document.getElementById("e_consultant")?.value || lead.agent_id;
 
@@ -1693,6 +1748,10 @@ async function saveProfileEdits(leadId) {
     traveler_preferences: v("e_preferences"),
     optional_tours: v("e_tours"),
     optional_services: v("e_services"),
+    // Audit trail: record who made this edit. updated_at is set by the DB
+    // trigger; this adds the "who".
+    updated_by: currentProfile.id,
+    updated_at: new Date().toISOString(),
   };
 
   // UPDATE, pinned to this one row. Never an insert — that would duplicate
@@ -2123,7 +2182,7 @@ async function saveDeparture(depId, ov) {
   };
 
   const { error } = depId
-    ? await supabaseClient.from("departures").update(payload).eq("id", depId)
+    ? await supabaseClient.from("departures").update({ ...payload, updated_by: currentProfile.id }).eq("id", depId)
     : await supabaseClient.from("departures").insert({ ...payload, created_by: currentProfile.id });
 
   if (error) {
