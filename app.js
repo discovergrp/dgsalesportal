@@ -1682,6 +1682,29 @@ function editClientProfile(leadId) {
           </div>
         </div>`)}
 
+      ${editGroup("Closing strategy by sales expert",
+        `<div style="grid-column:1 / -1;">
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <select id="e_expert" style="padding:9px 12px; border:1px solid var(--line); border-radius:8px; font-size:13px; font-family:inherit; background:#fff; color:var(--navy-900);">
+              <option value="hormozi">Alex Hormozi — value & offer stacking</option>
+              <option value="elliott">Andy Elliott — high-energy assumptive close</option>
+              <option value="levitin">Shari Levitin — heart & emotional connection</option>
+              <option value="blount">Jeb Blount — objection handling & follow-up</option>
+              <option value="carnegie">Dale Carnegie — rapport & making them feel valued</option>
+              <option value="ogilvy">David Ogilvy — persuasive benefit-driven copy</option>
+            </select>
+            <button type="button" id="e_expert_gen" style="padding:9px 16px; border:none; border-radius:8px; background:var(--navy-900); color:#fff; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit;">✨ Suggest strategy & script</button>
+            <span id="e_expert_note" style="font-size:12px; color:var(--ink-faint);"></span>
+          </div>
+          <div id="e_expert_out" style="margin-top:10px; display:none;">
+            <div style="font-size:11px; letter-spacing:.05em; text-transform:uppercase; color:var(--ink-faint); margin-bottom:3px;">Strategy</div>
+            <div id="e_expert_strategy" style="background:#f4f6fa; border:1px solid var(--line); border-radius:8px; padding:10px 12px; font-size:13px; color:var(--navy-900); line-height:1.5;"></div>
+            <div style="font-size:11px; letter-spacing:.05em; text-transform:uppercase; color:var(--ink-faint); margin:10px 0 3px;">Script (Sel's voice, this expert's technique)</div>
+            <textarea id="e_expert_script" rows="5" style="width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:8px; font-size:13.5px; font-family:inherit; resize:vertical; line-height:1.6; background:#fffdf5;"></textarea>
+            <button type="button" id="e_expert_use" style="margin-top:8px; padding:8px 14px; border:1px solid var(--line); border-radius:8px; background:#fff; font-size:12.5px; font-weight:700; color:var(--navy-900); cursor:pointer; font-family:inherit;">↑ Use as suggested script</button>
+          </div>
+        </div>`)}
+
       ${editGroup("Approved script",
         `<div style="grid-column:1 / -1;">
           ${l.script_approved && l.suggested_script ? `
@@ -1864,6 +1887,41 @@ function editClientProfile(leadId) {
       }
     } catch (e) { note.textContent = "Couldn't save — " + e.message; }
     approveBtn.disabled = false;
+  };
+
+  // Six-expert closing strategy: generate a strategy + script in a chosen
+  // expert's approach, kept in Sel's voice.
+  const expGen = document.getElementById("e_expert_gen");
+  if (expGen) expGen.onclick = async () => {
+    const note = document.getElementById("e_expert_note");
+    const tx = gatherTranscript();
+    if (!tx) { note.textContent = "Paste a conversation first."; return; }
+    expGen.disabled = true; expGen.textContent = "✨ Thinking…"; note.textContent = "";
+    try {
+      const { data, error } = await supabaseClient.functions.invoke("expert-strategy", {
+        body: { transcript: tx,
+          expert: document.getElementById("e_expert")?.value || "hormozi",
+          client_name: (allLeadsCache.find(x => x.id === leadId)?.client_full_name) || "" },
+      });
+      if (error || data?.error) note.textContent = "Couldn't generate — " + (data?.error || error.message);
+      else {
+        document.getElementById("e_expert_strategy").textContent = data.strategy || "—";
+        document.getElementById("e_expert_script").value = data.script || "";
+        document.getElementById("e_expert_out").style.display = "block";
+        note.textContent = "Ready — edit if needed, then use it.";
+      }
+    } catch (e) { note.textContent = "Couldn't reach the AI service."; }
+    expGen.disabled = false; expGen.textContent = "✨ Suggest strategy & script";
+  };
+
+  const expUse = document.getElementById("e_expert_use");
+  if (expUse) expUse.onclick = () => {
+    const s = document.getElementById("e_expert_script")?.value || "";
+    const strat = document.getElementById("e_expert_strategy")?.textContent || "";
+    if (s) document.getElementById("e_script").value = s;          // into the main script box
+    if (strat && document.getElementById("e_strategy")) document.getElementById("e_strategy").value = strat;  // into Next closing strategy
+    expUse.textContent = "Moved up ✓";
+    setTimeout(() => expUse.textContent = "↑ Use as suggested script", 1500);
   };
 
   const copyBtn = document.getElementById("e_copy_script");
