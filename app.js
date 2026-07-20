@@ -2554,6 +2554,7 @@ function renderUrgentAlerts() {
 // ---------- Leads Tracker ----------
 let leadSearch = "";
 let leadAgentFilter = "all";
+let leadTempFilter = "all";   // all | hot | warm | cold | none
 let leadSort = { key: "inquiry", dir: "desc" };
 let leadPage = 1;
 const LEADS_PER_PAGE = 10;
@@ -2569,6 +2570,14 @@ function filteredLeads() {
 
   if (leadAgentFilter !== "all") {
     leads = leads.filter(l => l.agent_id === leadAgentFilter);
+  }
+
+  if (leadTempFilter !== "all") {
+    leads = leads.filter(l => {
+      const t = (l.lead_temperature || "").toLowerCase();
+      if (leadTempFilter === "none") return !t;
+      return t.startsWith(leadTempFilter);
+    });
   }
 
   const q = leadSearch.trim().toLowerCase();
@@ -2772,10 +2781,25 @@ function ensureLeadsControls(box) {
     controls.innerHTML = `
       <select id="leadAgentSelect" style="padding:9px 14px; border:1px solid var(--line); border-radius:999px;
         font-size:13px; font-family:inherit; background:#fff; color:var(--navy-900); display:none;"></select>
+      <select id="leadTempSelect" style="padding:9px 14px; border:1px solid var(--line); border-radius:999px;
+        font-size:13px; font-family:inherit; background:#fff; color:var(--navy-900);">
+        <option value="all">All status</option>
+        <option value="hot">🔴 Hot</option>
+        <option value="warm">🟡 Warm</option>
+        <option value="cold">🔵 Cold</option>
+        <option value="none">— Not assessed</option>
+      </select>
       <input id="leadSearchInput" type="search" placeholder="Search name, email, phone, package…"
         style="padding:9px 14px; border:1px solid var(--line); border-radius:999px; font-size:13px; min-width:210px; font-family:inherit;">
       <button id="leadExportBtn" class="pill" type="button">↓ Export to Excel</button>`;
     titleRow.appendChild(controls);
+
+    document.getElementById("leadTempSelect").value = leadTempFilter;
+    document.getElementById("leadTempSelect").addEventListener("change", (e) => {
+      leadTempFilter = e.target.value;
+      leadPage = 1;
+      renderLeadsTable();
+    });
 
     document.getElementById("leadSearchInput").addEventListener("input", (e) => {
       leadSearch = e.target.value;
