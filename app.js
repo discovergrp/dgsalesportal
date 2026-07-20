@@ -1637,7 +1637,10 @@ function editClientProfile(leadId) {
         editSelect("Lead temperature", "e_temperature", l.lead_temperature, TEMP_OPTIONS) +
         editSelect("Decision status", "e_decision", l.decision_status, DECISION_OPTIONS) +
         editField("Next follow-up", "e_followup", l.next_followup ? String(l.next_followup).slice(0, 16) : "", "datetime-local") +
-        `<div></div><div></div>` +
+        `<div style="display:flex; align-items:center; gap:8px; align-self:end; padding-bottom:8px;">
+          <input type="checkbox" id="e_awaiting" ${l.awaiting_reply ? "checked" : ""} style="width:16px; height:16px; cursor:pointer;">
+          <label for="e_awaiting" style="font-size:13px; color:var(--navy-900); cursor:pointer;">Awaiting our reply (client messaged last)</label>
+        </div><div></div>` +
         editArea("Client concern / buying signal", "e_concern", l.concern) +
         `<div style="grid-column:1 / -1;">
           <label style="display:block; font-size:11px; letter-spacing:.05em; text-transform:uppercase; color:var(--ink-faint); margin-bottom:4px;">Next closing strategy</label>
@@ -2056,6 +2059,7 @@ async function saveProfileEdits(leadId) {
     transcript_phone: (document.getElementById("e_tx_phone")?.value || "").trim() || null,
     suggested_script: (document.getElementById("e_script")?.value || "").trim() || null,
     ai_lead_score: (function () { const v = document.getElementById("e_ai_score")?.value; return v === "" || v == null ? null : Number(v); })(),
+    awaiting_reply: !!document.getElementById("e_awaiting")?.checked,
     transcript_updated_at: new Date().toISOString(),
     booking_reference: v("e_booking_ref"),
     payments,
@@ -2661,6 +2665,7 @@ function renderUrgentAlerts() {
 let leadSearch = "";
 let leadAgentFilter = "all";
 let leadTempFilter = "all";   // all | hot | warm | cold | none
+let leadTranscriptFilter = "all";  // all | transcribed | untranscribed | unanswered
 let leadSort = { key: "inquiry", dir: "desc" };
 let leadPage = 1;
 const LEADS_PER_PAGE = 10;
@@ -2683,6 +2688,16 @@ function filteredLeads() {
       const t = (l.lead_temperature || "").toLowerCase();
       if (leadTempFilter === "none") return !t;
       return t.startsWith(leadTempFilter);
+    });
+  }
+
+  if (leadTranscriptFilter !== "all") {
+    leads = leads.filter(l => {
+      const has = hasTranscript(l);
+      if (leadTranscriptFilter === "transcribed") return has;
+      if (leadTranscriptFilter === "untranscribed") return !has;
+      if (leadTranscriptFilter === "unanswered") return !!l.awaiting_reply;
+      return true;
     });
   }
 
@@ -2895,6 +2910,13 @@ function ensureLeadsControls(box) {
         <option value="cold">🔵 Cold</option>
         <option value="none">— Not assessed</option>
       </select>
+      <select id="leadTxSelect" style="padding:9px 14px; border:1px solid var(--line); border-radius:999px;
+        font-size:13px; font-family:inherit; background:#fff; color:var(--navy-900);">
+        <option value="all">All transcripts</option>
+        <option value="transcribed">Transcribed</option>
+        <option value="untranscribed">Untranscribed</option>
+        <option value="unanswered">Unanswered</option>
+      </select>
       <input id="leadSearchInput" type="search" placeholder="Search name, email, phone, package…"
         style="padding:9px 14px; border:1px solid var(--line); border-radius:999px; font-size:13px; min-width:210px; font-family:inherit;">
       <button id="leadExportBtn" class="pill" type="button">↓ Export to Excel</button>`;
@@ -2903,6 +2925,13 @@ function ensureLeadsControls(box) {
     document.getElementById("leadTempSelect").value = leadTempFilter;
     document.getElementById("leadTempSelect").addEventListener("change", (e) => {
       leadTempFilter = e.target.value;
+      leadPage = 1;
+      renderLeadsTable();
+    });
+
+    document.getElementById("leadTxSelect").value = leadTranscriptFilter;
+    document.getElementById("leadTxSelect").addEventListener("change", (e) => {
+      leadTranscriptFilter = e.target.value;
       leadPage = 1;
       renderLeadsTable();
     });
@@ -3048,6 +3077,30 @@ function renderLeadsTable() {
   }
   empty.style.display = "none";
 
+  // Counts across the current view (before the transcript filter narrows it),
+  // so the totals stay meaningful regardless of which transcript view is active.
+  const statBase = (() => {
+    const saved = leadTranscriptFilter;
+    leadTranscriptFilter = "all";
+    const set = filteredLeads();
+    leadTranscriptFilter = saved;
+    return set;
+  })();
+  const nTranscribed = statBase.filter(l => hasTranscript(l)).length;
+  const nUntranscribed = statBase.length - nTranscribed;
+  const nUnanswered = statBase.filter(l => !!l.awaiting_reply).length;
+  const statCard = (label, val, color) => `
+    <div style="flex:1; min-width:120px; background:#fff; border:1px solid var(--line); border-radius:10px; padding:10px 14px;">
+      <div style="font-size:22px; font-weight:800; color:${color};">${val}</div>
+      <div style="font-size:11.5px; letter-spacing:.04em; text-transform:uppercase; color:var(--ink-faint);">${label}</div>
+    </div>`;
+  const statsRow = `
+    <div style="display:flex; gap:10px; flex-wrap:wrap; margin:0 0 14px;">
+      ${statCard("Transcribed", nTranscribed, "#2e8b57")}
+      ${statCard("Untranscribed", nUntranscribed, "var(--ink-soft)")}
+      ${statCard("Unanswered", nUnanswered, "#b42318")}
+    </div>`;
+
   const pages = Math.max(1, Math.ceil(all.length / LEADS_PER_PAGE));
   if (leadPage > pages) leadPage = pages;
   const start = (leadPage - 1) * LEADS_PER_PAGE;
@@ -3067,6 +3120,7 @@ function renderLeadsTable() {
 
   wrap.innerHTML = `
     ${flagNote}
+    ${statsRow}
     <div style="overflow-x:auto;">
       <table style="width:100%; border-collapse:collapse; min-width:860px;">
         <thead>
