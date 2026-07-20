@@ -1363,14 +1363,26 @@ function openClientProfile(leadId) {
         profileRow("Optional services", l.optional_services),
       ].join(""))}
 
-      ${l.transcript ? `
+      ${l.suggested_script ? `
         <div style="margin-top:22px;">
-          <h3 style="font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--gold-600); margin:0 0 8px;">Conversation transcript</h3>
-          <div style="background:#f4f6fa; border:1px solid var(--line); border-radius:10px; padding:14px 16px;
-            font-size:13px; line-height:1.6; color:var(--ink-soft); white-space:pre-wrap; max-height:340px; overflow-y:auto;">${l.transcript.replace(/</g, "&lt;")}</div>
-          <div style="font-size:11px; color:var(--ink-faint); margin-top:5px;">
-            ${l.transcript_updated_at ? "Last updated " + new Date(l.transcript_updated_at).toLocaleString() : ""}</div>
+          <h3 style="font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--gold-600); margin:0 0 8px;">Suggested script to send</h3>
+          <div style="background:#fffdf5; border:1px solid var(--gold-600); border-radius:10px; padding:14px 16px;
+            font-size:13.5px; line-height:1.6; color:var(--navy-900); white-space:pre-wrap;">${l.suggested_script.replace(/</g, "&lt;")}</div>
         </div>` : ""}
+
+      ${(l.transcript_meta || l.transcript_viber || l.transcript_phone) ? `
+        <div style="margin-top:22px;">
+          <h3 style="font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--gold-600); margin:0 0 8px;">Conversation transcripts</h3>
+          ${[["Messenger", l.transcript_meta], ["Viber", l.transcript_viber], ["Phone call", l.transcript_phone]]
+            .filter(([, t]) => t).map(([label, t]) => `
+              <div style="margin-bottom:10px;">
+                <div style="font-size:11px; font-weight:700; color:var(--ink-faint); margin-bottom:3px;">${label}</div>
+                <div style="background:#f4f6fa; border:1px solid var(--line); border-radius:10px; padding:12px 14px;
+                  font-size:13px; line-height:1.6; color:var(--ink-soft); white-space:pre-wrap; max-height:260px; overflow-y:auto;">${t.replace(/</g, "&lt;")}</div>
+              </div>`).join("")}
+        </div>` : ""}
+
+      <div id="profileNotes" style="margin-top:22px;"></div>
 
       ${profileSection("Record history", [
         profileRow("Owned by", agentName(l.agent_id)),
@@ -1402,6 +1414,9 @@ function openClientProfile(leadId) {
   document.getElementById("profileClose2").onclick = closeClientProfile;
   const editBtn = document.getElementById("profileEdit");
   if (editBtn) editBtn.onclick = () => editClientProfile(leadId);
+
+  // Show the conversation-notes log on the read-only profile too.
+  renderProfileNotes(leadId);
   document.getElementById("profileDocs").onclick = () => {
     closeClientProfile();
     const sel = document.getElementById("voucherClientSelect");
@@ -1627,19 +1642,53 @@ function editClientProfile(leadId) {
         editArea("Next closing strategy", "e_strategy", l.closing_strategy) +
         editArea("Remarks", "e_remarks", l.remarks))}
 
-      ${editGroup("Conversation transcript",
+      ${editGroup("Conversation transcripts",
+        `<div style="grid-column:1 / -1; display:grid; gap:14px;">
+          <div>
+            <label style="display:block; font-size:11px; letter-spacing:.05em; text-transform:uppercase; color:var(--ink-faint); margin-bottom:4px;">Messenger (Meta) transcript</label>
+            <textarea id="e_tx_meta" rows="5" placeholder="Paste the Messenger conversation…"
+              style="width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:8px; font-size:13px; font-family:inherit; resize:vertical; line-height:1.5;">${(l.transcript_meta || "").replace(/</g, "&lt;")}</textarea>
+          </div>
+          <div>
+            <label style="display:block; font-size:11px; letter-spacing:.05em; text-transform:uppercase; color:var(--ink-faint); margin-bottom:4px;">Viber transcript</label>
+            <textarea id="e_tx_viber" rows="5" placeholder="Paste the Viber conversation…"
+              style="width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:8px; font-size:13px; font-family:inherit; resize:vertical; line-height:1.5;">${(l.transcript_viber || "").replace(/</g, "&lt;")}</textarea>
+          </div>
+          <div>
+            <label style="display:block; font-size:11px; letter-spacing:.05em; text-transform:uppercase; color:var(--ink-faint); margin-bottom:4px;">Phone call transcript / notes</label>
+            <textarea id="e_tx_phone" rows="5" placeholder="Paste or type what was discussed on the call…"
+              style="width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:8px; font-size:13px; font-family:inherit; resize:vertical; line-height:1.5;">${(l.transcript_phone || "").replace(/</g, "&lt;")}</textarea>
+          </div>
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <button type="button" id="e_suggest" style="padding:9px 16px; border:none; border-radius:8px; background:var(--gold-600); color:#fff; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit;">✨ Fill concern, strategy & follow-up</button>
+            <span id="e_suggest_note" style="font-size:12px; color:var(--ink-faint);"></span>
+          </div>
+        </div>`)}
+
+      ${editGroup("Suggested script to send",
         `<div style="grid-column:1 / -1;">
-          <label style="display:block; font-size:11px; letter-spacing:.05em; text-transform:uppercase;
-            color:var(--ink-faint); margin-bottom:4px;">Paste the message thread here</label>
-          <textarea id="e_transcript" rows="10" placeholder="Paste the full Messenger / WhatsApp conversation…"
-            style="width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:8px;
-            font-size:13px; font-family:inherit; resize:vertical; line-height:1.5;">${(l.transcript || "").replace(/</g, "&lt;")}</textarea>
-          <div style="font-size:11px; color:var(--ink-faint); margin-top:5px;">
-            ${l.transcript_updated_at ? "Last pasted " + new Date(l.transcript_updated_at).toLocaleString() + ". " : ""}Saving keeps the full thread on this lead. Use "Suggest from transcript" to fill concern, strategy, and follow-up — Remarks stays yours to write.</div>
-          <button type="button" id="e_suggest" style="margin-top:10px; padding:9px 16px; border:none;
-            border-radius:8px; background:var(--gold-600); color:#fff; font-size:13px; font-weight:700;
-            cursor:pointer; font-family:inherit;">✨ Suggest from transcript</button>
-          <span id="e_suggest_note" style="margin-left:10px; font-size:12px; color:var(--ink-faint);"></span>
+          <textarea id="e_script" rows="6" placeholder="Click Generate to get a ready-to-send message based on the conversation…"
+            style="width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:8px; font-size:13.5px; font-family:inherit; resize:vertical; line-height:1.6; background:#fffdf5;">${(l.suggested_script || "").replace(/</g, "&lt;")}</textarea>
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:8px;">
+            <button type="button" id="e_gen_script" style="padding:9px 16px; border:none; border-radius:8px; background:var(--navy-900); color:#fff; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit;">✨ Generate script</button>
+            <button type="button" id="e_copy_script" style="padding:9px 14px; border:1px solid var(--line); border-radius:8px; background:#fff; font-size:13px; font-weight:700; color:var(--navy-900); cursor:pointer; font-family:inherit;">Copy</button>
+            <span id="e_script_note" style="font-size:12px; color:var(--ink-faint);"></span>
+          </div>
+          <div style="margin-top:8px;">
+            <input id="e_script_instruction" type="text" placeholder="Want it different? e.g. 'make it warmer', 'shorter', 'offer the promo', 'in Taglish' — then Generate again"
+              style="width:100%; padding:8px 11px; border:1px solid var(--line); border-radius:8px; font-size:12.5px; font-family:inherit;">
+          </div>
+        </div>`)}
+
+      ${editGroup("Client conversation notes",
+        `<div style="grid-column:1 / -1;">
+          <div id="e_notes_list" style="display:flex; flex-direction:column; gap:8px; margin-bottom:10px;">
+            <div style="font-size:12.5px; color:var(--ink-faint);">Loading notes…</div>
+          </div>
+          <textarea id="e_new_note" rows="2" placeholder="Add a note about this client… (saved with your name and the time)"
+            style="width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:8px; font-size:13px; font-family:inherit; resize:vertical;"></textarea>
+          <button type="button" id="e_add_note" style="margin-top:8px; padding:8px 15px; border:none; border-radius:8px; background:var(--gold-600); color:#fff; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit;">Add note</button>
+          <span id="e_note_status" style="margin-left:10px; font-size:12px; color:var(--ink-faint);"></span>
         </div>`)}
 
       ${editGroup("Booking & payments",
@@ -1686,43 +1735,124 @@ function editClientProfile(leadId) {
   // Payment rows: add and remove, so payments are fully editable here.
   wirePaymentEditor(leadId);
 
-  // "Suggest from transcript" — sends the pasted conversation to the AI
-  // function and fills concern, strategy, and follow-up. Remarks is left for
-  // the agent. Nothing is saved until the agent reviews and clicks Save.
+  // Pull the three channels together into one text for the AI to read.
+  const gatherTranscript = () => {
+    const parts = [];
+    const m = document.getElementById("e_tx_meta")?.value?.trim();
+    const v2 = document.getElementById("e_tx_viber")?.value?.trim();
+    const p = document.getElementById("e_tx_phone")?.value?.trim();
+    if (m) parts.push("[Messenger]\n" + m);
+    if (v2) parts.push("[Viber]\n" + v2);
+    if (p) parts.push("[Phone call]\n" + p);
+    return parts.join("\n\n");
+  };
+
+  // Fill concern, strategy, follow-up from the conversation. Remarks left alone.
   const suggestBtn = document.getElementById("e_suggest");
   if (suggestBtn) suggestBtn.onclick = async () => {
     const note = document.getElementById("e_suggest_note");
-    const tx = document.getElementById("e_transcript")?.value || "";
-    if (!tx.trim()) { note.textContent = "Paste a conversation first."; return; }
-    suggestBtn.disabled = true;
-    suggestBtn.textContent = "✨ Reading…";
-    note.textContent = "";
+    const tx = gatherTranscript();
+    if (!tx) { note.textContent = "Paste a conversation first."; return; }
+    suggestBtn.disabled = true; suggestBtn.textContent = "✨ Reading…"; note.textContent = "";
     try {
       const { data, error } = await supabaseClient.functions.invoke("suggest-from-transcript", {
-        body: {
-          transcript: tx,
-          stage: document.getElementById("e_stage")?.value || "",
+        body: { transcript: tx, stage: document.getElementById("e_stage")?.value || "",
           package_destination: document.getElementById("e_destination")?.value || "",
-          today: new Date().toISOString().slice(0, 10),
-        },
+          today: new Date().toISOString().slice(0, 10) },
       });
-      if (error || data?.error) {
-        note.textContent = "Couldn't read it — " + (data?.error || error.message);
-      } else {
+      if (error || data?.error) note.textContent = "Couldn't read it — " + (data?.error || error.message);
+      else {
         if (data.client_concern) document.getElementById("e_concern").value = data.client_concern;
         if (data.closing_strategy) document.getElementById("e_strategy").value = data.closing_strategy;
-        if (data.next_followup) {
-          const el = document.getElementById("e_followup");
-          if (el) el.value = data.next_followup + "T09:00";   // 9am on the suggested day
-        }
-        note.textContent = "Suggested — review, then Save. (Remarks left for you.)";
+        if (data.next_followup) { const el = document.getElementById("e_followup"); if (el) el.value = data.next_followup + "T09:00"; }
+        note.textContent = "Suggested — review, then Save.";
       }
-    } catch (e) {
-      note.textContent = "Couldn't reach the AI service. Check the key is saved in Supabase.";
-    }
-    suggestBtn.disabled = false;
-    suggestBtn.textContent = "✨ Suggest from transcript";
+    } catch (e) { note.textContent = "Couldn't reach the AI service."; }
+    suggestBtn.disabled = false; suggestBtn.textContent = "✨ Fill concern, strategy & follow-up";
   };
+
+  // Generate the exact message to send. Reads the optional instruction box so
+  // the agent can regenerate / paraphrase to their liking.
+  const genBtn = document.getElementById("e_gen_script");
+  if (genBtn) genBtn.onclick = async () => {
+    const note = document.getElementById("e_script_note");
+    const tx = gatherTranscript();
+    if (!tx) { note.textContent = "Paste a conversation first."; return; }
+    genBtn.disabled = true; genBtn.textContent = "✨ Writing…"; note.textContent = "";
+    try {
+      const { data, error } = await supabaseClient.functions.invoke("suggest-script", {
+        body: { transcript: tx, stage: document.getElementById("e_stage")?.value || "",
+          package_destination: document.getElementById("e_destination")?.value || "",
+          client_name: (allLeadsCache.find(x => x.id === leadId)?.client_full_name) || "",
+          instruction: document.getElementById("e_script_instruction")?.value || "" },
+      });
+      if (error || data?.error) note.textContent = "Couldn't write it — " + (data?.error || error.message);
+      else if (data.script) { document.getElementById("e_script").value = data.script; note.textContent = "Ready — edit if needed, Copy, then Save."; }
+      else note.textContent = "No script returned — try again.";
+    } catch (e) { note.textContent = "Couldn't reach the AI service."; }
+    genBtn.disabled = false; genBtn.textContent = "✨ Generate script";
+  };
+
+  const copyBtn = document.getElementById("e_copy_script");
+  if (copyBtn) copyBtn.onclick = () => {
+    const t = document.getElementById("e_script")?.value || "";
+    navigator.clipboard?.writeText(t);
+    copyBtn.textContent = "Copied ✓";
+    setTimeout(() => copyBtn.textContent = "Copy", 1500);
+  };
+
+  // Client conversation notes — load existing, allow adding with author + time.
+  loadClientNotes(leadId);
+  const addNoteBtn = document.getElementById("e_add_note");
+  if (addNoteBtn) addNoteBtn.onclick = async () => {
+    const box = document.getElementById("e_new_note");
+    const status = document.getElementById("e_note_status");
+    const text = (box?.value || "").trim();
+    if (!text) { status.textContent = "Write a note first."; return; }
+    addNoteBtn.disabled = true; status.textContent = "Saving…";
+    const { error } = await supabaseClient.from("client_notes")
+      .insert({ lead_id: leadId, note: text, created_by: currentProfile.id });
+    if (error) status.textContent = "Couldn't save — " + error.message;
+    else { box.value = ""; status.textContent = ""; await loadClientNotes(leadId); }
+    addNoteBtn.disabled = false;
+  };
+}
+
+// Loads the note log for a lead, newest first, each with author and timestamp.
+// Renders the notes log (read-only) on the client profile.
+async function renderProfileNotes(leadId) {
+  const box = document.getElementById("profileNotes");
+  if (!box) return;
+  const { data } = await supabaseClient.from("client_notes")
+    .select("note, created_at, created_by").eq("lead_id", leadId)
+    .order("created_at", { ascending: false });
+  if (!data || data.length === 0) return;   // nothing to show
+  box.innerHTML = `
+    <h3 style="font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--gold-600); margin:0 0 8px;">Client conversation notes</h3>
+    ${data.map(n => `
+      <div style="background:#f4f6fa; border:1px solid var(--line); border-radius:8px; padding:10px 12px; margin-bottom:8px;">
+        <div style="font-size:13px; color:var(--navy-900); white-space:pre-wrap; line-height:1.5;">${(n.note || "").replace(/</g, "&lt;")}</div>
+        <div style="font-size:11px; color:var(--ink-faint); margin-top:5px;">${agentName(n.created_by)} · ${new Date(n.created_at).toLocaleString()}</div>
+      </div>`).join("")}`;
+}
+
+async function loadClientNotes(leadId) {
+  const list = document.getElementById("e_notes_list");
+  if (!list) return;
+  const { data, error } = await supabaseClient.from("client_notes")
+    .select("note, created_at, created_by").eq("lead_id", leadId)
+    .order("created_at", { ascending: false });
+  if (error) { list.innerHTML = '<div style="font-size:12.5px; color:var(--ink-faint);">Couldn\'t load notes.</div>'; return; }
+  if (!data || data.length === 0) {
+    list.innerHTML = '<div style="font-size:12.5px; color:var(--ink-faint);">No notes yet. Add the first one below.</div>';
+    return;
+  }
+  list.innerHTML = data.map(n => `
+    <div style="background:#f4f6fa; border:1px solid var(--line); border-radius:8px; padding:10px 12px;">
+      <div style="font-size:13px; color:var(--navy-900); white-space:pre-wrap; line-height:1.5;">${(n.note || "").replace(/</g, "&lt;")}</div>
+      <div style="font-size:11px; color:var(--ink-faint); margin-top:5px;">
+        ${agentName(n.created_by)} · ${new Date(n.created_at).toLocaleString()}</div>
+    </div>`).join("");
 }
 
 // Keeps the payment editor's add/remove working after any re-render.
@@ -1807,9 +1937,11 @@ async function saveProfileEdits(leadId) {
     concern: v("e_concern"),
     closing_strategy: v("e_strategy"),
     remarks: v("e_remarks"),   // agent-only; never auto-filled from the transcript
-    transcript: (document.getElementById("e_transcript")?.value || "").trim() || null,
-    transcript_updated_at: (document.getElementById("e_transcript")?.value || "").trim()
-      ? new Date().toISOString() : (l.transcript_updated_at || null),
+    transcript_meta: (document.getElementById("e_tx_meta")?.value || "").trim() || null,
+    transcript_viber: (document.getElementById("e_tx_viber")?.value || "").trim() || null,
+    transcript_phone: (document.getElementById("e_tx_phone")?.value || "").trim() || null,
+    suggested_script: (document.getElementById("e_script")?.value || "").trim() || null,
+    transcript_updated_at: new Date().toISOString(),
     booking_reference: v("e_booking_ref"),
     payments,
     visa_service_availed: v("e_visa_availed"),
