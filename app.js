@@ -1672,6 +1672,7 @@ function editClientProfile(leadId) {
             style="width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:8px; font-size:13.5px; font-family:inherit; resize:vertical; line-height:1.6; background:#fffdf5;">${(l.suggested_script || "").replace(/</g, "&lt;")}</textarea>
           <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:8px;">
             <button type="button" id="e_gen_script" style="padding:9px 16px; border:none; border-radius:8px; background:var(--navy-900); color:#fff; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit;">✨ Generate script</button>
+            <button type="button" id="e_handle_obj" style="padding:9px 16px; border:none; border-radius:8px; background:var(--gold-600); color:#fff; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit;">🛡️ Handle objection</button>
             <button type="button" id="e_copy_script" style="padding:9px 14px; border:1px solid var(--line); border-radius:8px; background:#fff; font-size:13px; font-weight:700; color:var(--navy-900); cursor:pointer; font-family:inherit;">Copy</button>
             <span id="e_script_note" style="font-size:12px; color:var(--ink-faint);"></span>
           </div>
@@ -1799,6 +1800,27 @@ function editClientProfile(leadId) {
       else note.textContent = "No script returned — try again.";
     } catch (e) { note.textContent = "Couldn't reach the AI service."; }
     genBtn.disabled = false; genBtn.textContent = "✨ Generate script";
+  };
+
+  // Objection handler — reframes a client's pushback into Sel's next message,
+  // using the instruction box as the specific objection if the agent typed one.
+  const objBtn = document.getElementById("e_handle_obj");
+  if (objBtn) objBtn.onclick = async () => {
+    const note = document.getElementById("e_script_note");
+    const tx = gatherTranscript();
+    if (!tx) { note.textContent = "Paste the conversation first."; return; }
+    objBtn.disabled = true; objBtn.textContent = "🛡️ Thinking…"; note.textContent = "";
+    try {
+      const { data, error } = await supabaseClient.functions.invoke("handle-objection", {
+        body: { transcript: tx,
+          objection: document.getElementById("e_script_instruction")?.value || "",
+          client_name: (allLeadsCache.find(x => x.id === leadId)?.client_full_name) || "" },
+      });
+      if (error || data?.error) note.textContent = "Couldn't handle it — " + (data?.error || error.message);
+      else if (data.script) { document.getElementById("e_script").value = data.script; note.textContent = "Objection reframed — review, Copy, then Save."; }
+      else note.textContent = "Nothing returned — try again.";
+    } catch (e) { note.textContent = "Couldn't reach the AI service."; }
+    objBtn.disabled = false; objBtn.textContent = "🛡️ Handle objection";
   };
 
   const copyBtn = document.getElementById("e_copy_script");
