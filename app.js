@@ -1682,6 +1682,21 @@ function editClientProfile(leadId) {
           </div>
         </div>`)}
 
+      ${editGroup("Approved script",
+        `<div style="grid-column:1 / -1;">
+          ${l.script_approved && l.suggested_script ? `
+            <div style="background:#eef7ee; border:1px solid #2e8b57; border-radius:10px; padding:14px 16px;
+              font-size:13.5px; line-height:1.6; color:var(--navy-900); white-space:pre-wrap;">${(l.suggested_script || "").replace(/</g, "&lt;")}</div>
+            <div style="font-size:11px; color:var(--ink-faint); margin-top:5px;">
+              ✅ Approved${l.script_approved_by ? " by " + agentName(l.script_approved_by) : ""}${l.script_approved_at ? " · " + new Date(l.script_approved_at).toLocaleString() : ""}</div>` : `
+            <div style="font-size:12.5px; color:var(--ink-faint);">No approved script yet. Generate a script above, then click <strong>Approve this script</strong> to save it here.</div>`}
+          <div style="display:flex; gap:8px; align-items:center; margin-top:10px;">
+            <button type="button" id="e_approve_script" style="padding:9px 16px; border:none; border-radius:8px;
+              background:#2e8b57; color:#fff; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit;">✅ Approve this script</button>
+            <span id="e_approve_note" style="font-size:12px; color:var(--ink-faint);"></span>
+          </div>
+        </div>`)}
+
       ${editGroup("Client conversation notes",
         `<div style="grid-column:1 / -1;">
           <div id="e_notes_list" style="display:flex; flex-direction:column; gap:8px; margin-bottom:10px;">
@@ -1821,6 +1836,34 @@ function editClientProfile(leadId) {
       else note.textContent = "Nothing returned — try again.";
     } catch (e) { note.textContent = "Couldn't reach the AI service."; }
     objBtn.disabled = false; objBtn.textContent = "🛡️ Handle objection";
+  };
+
+  // Approve the current script: mark it on the lead and add to the library.
+  const approveBtn = document.getElementById("e_approve_script");
+  if (approveBtn) approveBtn.onclick = async () => {
+    const note = document.getElementById("e_approve_note");
+    const script = (document.getElementById("e_script")?.value || "").trim();
+    if (!script) { note.textContent = "Generate a script first."; return; }
+    approveBtn.disabled = true; note.textContent = "Saving…";
+    const clientName = (allLeadsCache.find(x => x.id === leadId)?.client_full_name) || "";
+    const now = new Date().toISOString();
+    try {
+      const up = await supabaseClient.from("leads").update({
+        suggested_script: script, script_approved: true,
+        script_approved_by: currentProfile.id, script_approved_at: now,
+      }).eq("id", leadId);
+      await supabaseClient.from("approved_scripts").insert({
+        lead_id: leadId, client_name: clientName, script,
+        approved_by: currentProfile.id, approved_at: now,
+      });
+      if (up.error) note.textContent = "Couldn't save — " + up.error.message;
+      else {
+        note.textContent = "✅ Approved and saved to the library.";
+        const c = allLeadsCache.find(x => x.id === leadId);
+        if (c) { c.suggested_script = script; c.script_approved = true; c.script_approved_by = currentProfile.id; c.script_approved_at = now; }
+      }
+    } catch (e) { note.textContent = "Couldn't save — " + e.message; }
+    approveBtn.disabled = false;
   };
 
   const copyBtn = document.getElementById("e_copy_script");
