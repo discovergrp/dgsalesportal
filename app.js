@@ -1666,7 +1666,7 @@ function editClientProfile(leadId) {
           </div>
         </div>`)}
 
-      ${editGroup("Suggested script to send",
+      ${editGroup("Suggested script & strategy",
         `<div style="grid-column:1 / -1;">
           <textarea id="e_script" rows="6" placeholder="Click Generate to get a ready-to-send message based on the conversation…"
             style="width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:8px; font-size:13.5px; font-family:inherit; resize:vertical; line-height:1.6; background:#fffdf5;">${(l.suggested_script || "").replace(/</g, "&lt;")}</textarea>
@@ -1677,32 +1677,34 @@ function editClientProfile(leadId) {
             <span id="e_script_note" style="font-size:12px; color:var(--ink-faint);"></span>
           </div>
           <div style="margin-top:8px;">
-            <input id="e_script_instruction" type="text" placeholder="Want it different? e.g. 'make it warmer', 'shorter', 'offer the promo', 'in Taglish' — then Generate again"
+            <input id="e_script_instruction" type="text" placeholder="Want it different? e.g. 'make it warmer', 'shorter', 'offer the promo' — then Generate again"
               style="width:100%; padding:8px 11px; border:1px solid var(--line); border-radius:8px; font-size:12.5px; font-family:inherit;">
           </div>
-        </div>`)}
 
-      ${editGroup("Closing strategy by sales expert",
-        `<div style="grid-column:1 / -1;">
-          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-            <select id="e_expert" style="padding:9px 12px; border:1px solid var(--line); border-radius:8px; font-size:13px; font-family:inherit; background:#fff; color:var(--navy-900);">
-              <option value="hormozi">Alex Hormozi — value & offer stacking</option>
-              <option value="elliott">Andy Elliott — high-energy assumptive close</option>
-              <option value="levitin">Shari Levitin — heart & emotional connection</option>
-              <option value="blount">Jeb Blount — objection handling & follow-up</option>
-              <option value="carnegie">Dale Carnegie — rapport & making them feel valued</option>
-              <option value="ogilvy">David Ogilvy — persuasive benefit-driven copy</option>
-            </select>
-            <button type="button" id="e_expert_gen" style="padding:9px 16px; border:none; border-radius:8px; background:var(--navy-900); color:#fff; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit;">✨ Suggest strategy & script</button>
-            <span id="e_expert_note" style="font-size:12px; color:var(--ink-faint);"></span>
-          </div>
-          <div id="e_expert_out" style="margin-top:10px; display:none;">
-            <div style="font-size:11px; letter-spacing:.05em; text-transform:uppercase; color:var(--ink-faint); margin-bottom:3px;">Strategy</div>
-            <div id="e_expert_strategy" style="background:#f4f6fa; border:1px solid var(--line); border-radius:8px; padding:10px 12px; font-size:13px; color:var(--navy-900); line-height:1.5;"></div>
-            <div style="font-size:11px; letter-spacing:.05em; text-transform:uppercase; color:var(--ink-faint); margin:10px 0 3px;">Script (Sel's voice, this expert's technique)</div>
-            <textarea id="e_expert_script" rows="5" style="width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:8px; font-size:13.5px; font-family:inherit; resize:vertical; line-height:1.6; background:#fffdf5;"></textarea>
-            <button type="button" id="e_expert_use" style="margin-top:8px; padding:8px 14px; border:1px solid var(--line); border-radius:8px; background:#fff; font-size:12.5px; font-weight:700; color:var(--navy-900); cursor:pointer; font-family:inherit;">↑ Use as suggested script</button>
-          </div>
+          <details style="margin-top:14px; border-top:1px dashed var(--line); padding-top:12px;">
+            <summary style="cursor:pointer; font-size:12.5px; font-weight:700; color:var(--gold-600); list-style:none;">↳ Need a different angle? Generate from a sales expert (optional)</summary>
+            <div style="margin-top:12px;">
+              <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                <select id="e_expert" style="padding:9px 12px; border:1px solid var(--line); border-radius:8px; font-size:13px; font-family:inherit; background:#fff; color:var(--navy-900);">
+                  <option value="hormozi">Alex Hormozi — value & offer stacking</option>
+                  <option value="elliott">Andy Elliott — high-energy assumptive close</option>
+                  <option value="levitin">Shari Levitin — heart & emotional connection</option>
+                  <option value="blount">Jeb Blount — objection handling & follow-up</option>
+                  <option value="carnegie">Dale Carnegie — rapport & making them feel valued</option>
+                  <option value="ogilvy">David Ogilvy — persuasive benefit-driven copy</option>
+                </select>
+                <button type="button" id="e_expert_gen" style="padding:9px 16px; border:none; border-radius:8px; background:var(--navy-900); color:#fff; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit;">✨ Suggest strategy & script</button>
+                <span id="e_expert_note" style="font-size:12px; color:var(--ink-faint);"></span>
+              </div>
+              <div id="e_expert_out" style="margin-top:10px; display:none;">
+                <div style="font-size:11px; letter-spacing:.05em; text-transform:uppercase; color:var(--ink-faint); margin-bottom:3px;">Strategy</div>
+                <div id="e_expert_strategy" style="background:#f4f6fa; border:1px solid var(--line); border-radius:8px; padding:10px 12px; font-size:13px; color:var(--navy-900); line-height:1.5;"></div>
+                <div style="font-size:11px; letter-spacing:.05em; text-transform:uppercase; color:var(--ink-faint); margin:10px 0 3px;">Script (Sel's voice, this expert's technique)</div>
+                <textarea id="e_expert_script" rows="5" style="width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:8px; font-size:13.5px; font-family:inherit; resize:vertical; line-height:1.6; background:#fffdf5;"></textarea>
+                <button type="button" id="e_expert_use" style="margin-top:8px; padding:8px 14px; border:1px solid var(--line); border-radius:8px; background:#fff; font-size:12.5px; font-weight:700; color:var(--navy-900); cursor:pointer; font-family:inherit;">↑ Use as suggested script</button>
+              </div>
+            </div>
+          </details>
         </div>`)}
 
       ${editGroup("Approved script",
