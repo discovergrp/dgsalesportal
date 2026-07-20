@@ -1639,7 +1639,30 @@ function editClientProfile(leadId) {
         editField("Next follow-up", "e_followup", l.next_followup ? String(l.next_followup).slice(0, 16) : "", "datetime-local") +
         `<div></div><div></div>` +
         editArea("Client concern / buying signal", "e_concern", l.concern) +
-        editArea("Next closing strategy", "e_strategy", l.closing_strategy) +
+        `<div style="grid-column:1 / -1;">
+          <label style="display:block; font-size:11px; letter-spacing:.05em; text-transform:uppercase; color:var(--ink-faint); margin-bottom:4px;">Next closing strategy</label>
+          <textarea id="e_strategy" rows="2"
+            style="width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:7px; font-size:13.5px; font-family:inherit; color:var(--navy-900); resize:vertical;">${l.closing_strategy || ""}</textarea>
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:8px;">
+            <select id="e_expert" style="padding:8px 11px; border:1px solid var(--line); border-radius:8px; font-size:13px; font-family:inherit; background:#fff; color:var(--navy-900);">
+              <option value="hormozi">Alex Hormozi — value & offer stacking</option>
+              <option value="elliott">Andy Elliott — high-energy assumptive close</option>
+              <option value="levitin">Shari Levitin — heart & emotional connection</option>
+              <option value="blount">Jeb Blount — objection handling & follow-up</option>
+              <option value="carnegie">Dale Carnegie — rapport & making them feel valued</option>
+              <option value="ogilvy">David Ogilvy — persuasive benefit-driven copy</option>
+            </select>
+            <button type="button" id="e_expert_gen" style="padding:8px 15px; border:none; border-radius:8px; background:var(--navy-900); color:#fff; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit;">✨ Generate script with this approach</button>
+            <span id="e_expert_note" style="font-size:12px; color:var(--ink-faint);"></span>
+          </div>
+          <div style="font-size:11.5px; color:var(--ink-faint); margin-top:5px;">Fills the strategy above, then drafts a script in Sel's tone &amp; Taglish using this expert's technique.</div>
+          <div id="e_expert_out" style="margin-top:10px; display:none;">
+            <div style="font-size:11px; letter-spacing:.05em; text-transform:uppercase; color:var(--ink-faint); margin:0 0 3px;">Draft script (Sel's voice · this expert's technique)</div>
+            <textarea id="e_expert_script" rows="5" style="width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:8px; font-size:13.5px; font-family:inherit; resize:vertical; line-height:1.6; background:#fffdf5;"></textarea>
+            <div id="e_expert_strategy" style="display:none;"></div>
+            <button type="button" id="e_expert_use" style="margin-top:8px; padding:8px 14px; border:1px solid var(--line); border-radius:8px; background:#fff; font-size:12.5px; font-weight:700; color:var(--navy-900); cursor:pointer; font-family:inherit;">↑ Use as suggested script</button>
+          </div>
+        </div>` +
         editArea("Remarks", "e_remarks", l.remarks))}
 
       ${editGroup("Conversation transcripts",
@@ -1680,31 +1703,6 @@ function editClientProfile(leadId) {
             <input id="e_script_instruction" type="text" placeholder="Want it different? e.g. 'make it warmer', 'shorter', 'offer the promo' — then Generate again"
               style="width:100%; padding:8px 11px; border:1px solid var(--line); border-radius:8px; font-size:12.5px; font-family:inherit;">
           </div>
-
-          <details style="margin-top:14px; border-top:1px dashed var(--line); padding-top:12px;">
-            <summary style="cursor:pointer; font-size:12.5px; font-weight:700; color:var(--gold-600); list-style:none;">↳ Need a different angle? Generate from a sales expert (optional)</summary>
-            <div style="margin-top:12px;">
-              <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-                <select id="e_expert" style="padding:9px 12px; border:1px solid var(--line); border-radius:8px; font-size:13px; font-family:inherit; background:#fff; color:var(--navy-900);">
-                  <option value="hormozi">Alex Hormozi — value & offer stacking</option>
-                  <option value="elliott">Andy Elliott — high-energy assumptive close</option>
-                  <option value="levitin">Shari Levitin — heart & emotional connection</option>
-                  <option value="blount">Jeb Blount — objection handling & follow-up</option>
-                  <option value="carnegie">Dale Carnegie — rapport & making them feel valued</option>
-                  <option value="ogilvy">David Ogilvy — persuasive benefit-driven copy</option>
-                </select>
-                <button type="button" id="e_expert_gen" style="padding:9px 16px; border:none; border-radius:8px; background:var(--navy-900); color:#fff; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit;">✨ Suggest strategy & script</button>
-                <span id="e_expert_note" style="font-size:12px; color:var(--ink-faint);"></span>
-              </div>
-              <div id="e_expert_out" style="margin-top:10px; display:none;">
-                <div style="font-size:11px; letter-spacing:.05em; text-transform:uppercase; color:var(--ink-faint); margin-bottom:3px;">Strategy</div>
-                <div id="e_expert_strategy" style="background:#f4f6fa; border:1px solid var(--line); border-radius:8px; padding:10px 12px; font-size:13px; color:var(--navy-900); line-height:1.5;"></div>
-                <div style="font-size:11px; letter-spacing:.05em; text-transform:uppercase; color:var(--ink-faint); margin:10px 0 3px;">Script (Sel's voice, this expert's technique)</div>
-                <textarea id="e_expert_script" rows="5" style="width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:8px; font-size:13.5px; font-family:inherit; resize:vertical; line-height:1.6; background:#fffdf5;"></textarea>
-                <button type="button" id="e_expert_use" style="margin-top:8px; padding:8px 14px; border:1px solid var(--line); border-radius:8px; background:#fff; font-size:12.5px; font-weight:700; color:var(--navy-900); cursor:pointer; font-family:inherit;">↑ Use as suggested script</button>
-              </div>
-            </div>
-          </details>
         </div>`)}
 
       ${editGroup("Approved script",
@@ -1908,12 +1906,13 @@ function editClientProfile(leadId) {
       if (error || data?.error) note.textContent = "Couldn't generate — " + (data?.error || error.message);
       else {
         document.getElementById("e_expert_strategy").textContent = data.strategy || "—";
+        if (data.strategy && document.getElementById("e_strategy")) document.getElementById("e_strategy").value = data.strategy;  // fill Next closing strategy
         document.getElementById("e_expert_script").value = data.script || "";
         document.getElementById("e_expert_out").style.display = "block";
-        note.textContent = "Ready — edit if needed, then use it.";
+        note.textContent = "Strategy filled above. Edit the draft if needed, then use it.";
       }
     } catch (e) { note.textContent = "Couldn't reach the AI service."; }
-    expGen.disabled = false; expGen.textContent = "✨ Suggest strategy & script";
+    expGen.disabled = false; expGen.textContent = "✨ Generate script with this approach";
   };
 
   const expUse = document.getElementById("e_expert_use");
