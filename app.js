@@ -1635,7 +1635,11 @@ function editClientProfile(leadId) {
             style="width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:8px;
             font-size:13px; font-family:inherit; resize:vertical; line-height:1.5;">${(l.transcript || "").replace(/</g, "&lt;")}</textarea>
           <div style="font-size:11px; color:var(--ink-faint); margin-top:5px;">
-            ${l.transcript_updated_at ? "Last pasted " + new Date(l.transcript_updated_at).toLocaleString() + ". " : ""}Saving keeps the full thread on this lead. The last line is copied into Remarks as the latest update.</div>
+            ${l.transcript_updated_at ? "Last pasted " + new Date(l.transcript_updated_at).toLocaleString() + ". " : ""}Saving keeps the full thread on this lead. Use "Suggest from transcript" to fill concern, strategy, and follow-up — Remarks stays yours to write.</div>
+          <button type="button" id="e_suggest" style="margin-top:10px; padding:9px 16px; border:none;
+            border-radius:8px; background:var(--gold-600); color:#fff; font-size:13px; font-weight:700;
+            cursor:pointer; font-family:inherit;">✨ Suggest from transcript</button>
+          <span id="e_suggest_note" style="margin-left:10px; font-size:12px; color:var(--ink-faint);"></span>
         </div>`)}
 
       ${editGroup("Booking & payments",
@@ -1681,6 +1685,44 @@ function editClientProfile(leadId) {
 
   // Payment rows: add and remove, so payments are fully editable here.
   wirePaymentEditor(leadId);
+
+  // "Suggest from transcript" — sends the pasted conversation to the AI
+  // function and fills concern, strategy, and follow-up. Remarks is left for
+  // the agent. Nothing is saved until the agent reviews and clicks Save.
+  const suggestBtn = document.getElementById("e_suggest");
+  if (suggestBtn) suggestBtn.onclick = async () => {
+    const note = document.getElementById("e_suggest_note");
+    const tx = document.getElementById("e_transcript")?.value || "";
+    if (!tx.trim()) { note.textContent = "Paste a conversation first."; return; }
+    suggestBtn.disabled = true;
+    suggestBtn.textContent = "✨ Reading…";
+    note.textContent = "";
+    try {
+      const { data, error } = await supabaseClient.functions.invoke("suggest-from-transcript", {
+        body: {
+          transcript: tx,
+          stage: document.getElementById("e_stage")?.value || "",
+          package_destination: document.getElementById("e_destination")?.value || "",
+          today: new Date().toISOString().slice(0, 10),
+        },
+      });
+      if (error || data?.error) {
+        note.textContent = "Couldn't read it — " + (data?.error || error.message);
+      } else {
+        if (data.client_concern) document.getElementById("e_concern").value = data.client_concern;
+        if (data.closing_strategy) document.getElementById("e_strategy").value = data.closing_strategy;
+        if (data.next_followup) {
+          const el = document.getElementById("e_followup");
+          if (el) el.value = data.next_followup + "T09:00";   // 9am on the suggested day
+        }
+        note.textContent = "Suggested — review, then Save. (Remarks left for you.)";
+      }
+    } catch (e) {
+      note.textContent = "Couldn't reach the AI service. Check the key is saved in Supabase.";
+    }
+    suggestBtn.disabled = false;
+    suggestBtn.textContent = "✨ Suggest from transcript";
+  };
 }
 
 // Keeps the payment editor's add/remove working after any re-render.
@@ -1764,17 +1806,7 @@ async function saveProfileEdits(leadId) {
     next_followup: v("e_followup"),
     concern: v("e_concern"),
     closing_strategy: v("e_strategy"),
-    remarks: (function () {
-      const typed = v("e_remarks");
-      const tx = document.getElementById("e_transcript")?.value || "";
-      // If a transcript is present, use its last non-empty line as the latest
-      // update — unless the user typed their own remark, which wins.
-      if (!typed && tx.trim()) {
-        const lines = tx.split("\n").map(s => s.trim()).filter(Boolean);
-        return lines.length ? lines[lines.length - 1].slice(0, 300) : typed;
-      }
-      return typed;
-    })(),
+    remarks: v("e_remarks"),   // agent-only; never auto-filled from the transcript
     transcript: (document.getElementById("e_transcript")?.value || "").trim() || null,
     transcript_updated_at: (document.getElementById("e_transcript")?.value || "").trim()
       ? new Date().toISOString() : (l.transcript_updated_at || null),
