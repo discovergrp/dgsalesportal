@@ -1363,6 +1363,15 @@ function openClientProfile(leadId) {
         profileRow("Optional services", l.optional_services),
       ].join(""))}
 
+      ${l.transcript ? `
+        <div style="margin-top:22px;">
+          <h3 style="font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--gold-600); margin:0 0 8px;">Conversation transcript</h3>
+          <div style="background:#f4f6fa; border:1px solid var(--line); border-radius:10px; padding:14px 16px;
+            font-size:13px; line-height:1.6; color:var(--ink-soft); white-space:pre-wrap; max-height:340px; overflow-y:auto;">${l.transcript.replace(/</g, "&lt;")}</div>
+          <div style="font-size:11px; color:var(--ink-faint); margin-top:5px;">
+            ${l.transcript_updated_at ? "Last updated " + new Date(l.transcript_updated_at).toLocaleString() : ""}</div>
+        </div>` : ""}
+
       ${profileSection("Record history", [
         profileRow("Owned by", agentName(l.agent_id)),
         profileRow("Entered by", l.created_by ? agentName(l.created_by) : "—"),
@@ -1618,6 +1627,17 @@ function editClientProfile(leadId) {
         editArea("Next closing strategy", "e_strategy", l.closing_strategy) +
         editArea("Remarks", "e_remarks", l.remarks))}
 
+      ${editGroup("Conversation transcript",
+        `<div style="grid-column:1 / -1;">
+          <label style="display:block; font-size:11px; letter-spacing:.05em; text-transform:uppercase;
+            color:var(--ink-faint); margin-bottom:4px;">Paste the message thread here</label>
+          <textarea id="e_transcript" rows="10" placeholder="Paste the full Messenger / WhatsApp conversation…"
+            style="width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:8px;
+            font-size:13px; font-family:inherit; resize:vertical; line-height:1.5;">${(l.transcript || "").replace(/</g, "&lt;")}</textarea>
+          <div style="font-size:11px; color:var(--ink-faint); margin-top:5px;">
+            ${l.transcript_updated_at ? "Last pasted " + new Date(l.transcript_updated_at).toLocaleString() + ". " : ""}Saving keeps the full thread on this lead. The last line is copied into Remarks as the latest update.</div>
+        </div>`)}
+
       ${editGroup("Booking & payments",
         editField("Booking reference", "e_booking_ref", l.booking_reference) + `<div></div><div></div>`)}
       <div style="margin-top:10px;">${editPaymentRows(l.payments)}</div>
@@ -1744,7 +1764,20 @@ async function saveProfileEdits(leadId) {
     next_followup: v("e_followup"),
     concern: v("e_concern"),
     closing_strategy: v("e_strategy"),
-    remarks: v("e_remarks"),
+    remarks: (function () {
+      const typed = v("e_remarks");
+      const tx = document.getElementById("e_transcript")?.value || "";
+      // If a transcript is present, use its last non-empty line as the latest
+      // update — unless the user typed their own remark, which wins.
+      if (!typed && tx.trim()) {
+        const lines = tx.split("\n").map(s => s.trim()).filter(Boolean);
+        return lines.length ? lines[lines.length - 1].slice(0, 300) : typed;
+      }
+      return typed;
+    })(),
+    transcript: (document.getElementById("e_transcript")?.value || "").trim() || null,
+    transcript_updated_at: (document.getElementById("e_transcript")?.value || "").trim()
+      ? new Date().toISOString() : (l.transcript_updated_at || null),
     booking_reference: v("e_booking_ref"),
     payments,
     visa_service_availed: v("e_visa_availed"),
