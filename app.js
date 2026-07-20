@@ -2773,7 +2773,11 @@ function renderLeadsTable() {
               <td style="${td} text-align:center;">${Number(l.travelers) || 0}</td>
               <td style="${td}">${l.package_destination || "—"}</td>
               <td style="${td} text-align:center; font-weight:700; color:var(--navy-900);">${leadScore(l)}/10</td>
-              <td style="${td} max-width:180px;">${l.remarks || "—"}</td>
+              <td style="${td} max-width:180px;">
+                <span class="lead-lastupdate" data-lead="${l.id}" title="Click to update this lead"
+                  style="cursor:pointer; color:${l.remarks ? "var(--navy-900)" : "var(--gold-600)"};
+                  text-decoration:underline; text-decoration-color:var(--line); text-underline-offset:2px;">${l.remarks || "+ Add update"}</span>
+              </td>
               <td style="${td} max-width:220px;">${l.closing_strategy || "—"}</td>
               <td style="${td}">
                 <div style="display:flex; gap:6px;">
@@ -2835,6 +2839,17 @@ function renderLeadsTable() {
 
   wrap.querySelectorAll(".lead-delete").forEach(btn => {
     btn.addEventListener("click", () => deleteLead(btn.dataset.lead));
+  });
+
+  // Clicking "Last update" jumps straight into editing this lead — for editors;
+  // everyone else opens the profile.
+  wrap.querySelectorAll(".lead-lastupdate").forEach(el => {
+    el.addEventListener("click", () => {
+      const id = el.dataset.lead;
+      const lead = allLeadsCache.find(l => l.id === id);
+      if (lead && canEditLead(lead)) editClientProfile(id);
+      else openClientProfile(id);
+    });
   });
 }
 
