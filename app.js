@@ -2368,7 +2368,7 @@ function filteredLeads() {
   const q = leadSearch.trim().toLowerCase();
   if (q) {
     leads = leads.filter(l =>
-      [l.client_full_name, l.client_mobile, l.package_destination, agentName(l.agent_id)]
+      [l.client_full_name, l.client_email, l.client_mobile, l.package_destination, l.remarks, agentName(l.agent_id)]
         .some(v => (v || "").toLowerCase().includes(q))
     );
   }
@@ -2566,7 +2566,7 @@ function ensureLeadsControls(box) {
     controls.innerHTML = `
       <select id="leadAgentSelect" style="padding:9px 14px; border:1px solid var(--line); border-radius:999px;
         font-size:13px; font-family:inherit; background:#fff; color:var(--navy-900); display:none;"></select>
-      <input id="leadSearchInput" type="search" placeholder="Search leads…"
+      <input id="leadSearchInput" type="search" placeholder="Search name, email, phone, package…"
         style="padding:9px 14px; border:1px solid var(--line); border-radius:999px; font-size:13px; min-width:210px; font-family:inherit;">
       <button id="leadExportBtn" class="pill" type="button">↓ Export to Excel</button>`;
     titleRow.appendChild(controls);
@@ -2606,6 +2606,44 @@ function sortHeader(label, key, align) {
     font-size:11px; letter-spacing:.06em; text-transform:uppercase; cursor:pointer; white-space:nowrap;
     color:${active ? "var(--navy-900)" : "var(--ink-soft)"}; border-bottom:1px solid rgba(0,0,0,.08);"
     >${label} <span style="opacity:${active ? 1 : 0.35};">${arrow}</span></th>`;
+}
+
+// A stable color per agent, so each consultant reads the same everywhere.
+const AGENT_DOT_COLORS = ["#4a6fb5", "#2e8b57", "#6b5bc4", "#c9a227", "#b4623b", "#2f8a8a", "#a23b8f", "#5a6b2f"];
+function agentDot(agentId) {
+  if (!agentId) return "#c3cad6";
+  let h = 0;
+  for (let i = 0; i < agentId.length; i++) h = (h * 31 + agentId.charCodeAt(i)) & 0xffff;
+  return AGENT_DOT_COLORS[h % AGENT_DOT_COLORS.length];
+}
+function agentShort(agentId) {
+  const full = agentName(agentId);
+  if (!full || full === "Unassigned") return "—";
+  return full.split(" ")[0];
+}
+function statusPill(l) {
+  const t = (l.lead_temperature || "").toLowerCase();
+  let label = "—", c = "#8a94a6";
+  if (t.startsWith("hot")) { label = "Hot"; c = "#b42318"; }
+  else if (t.startsWith("warm")) { label = "Warm"; c = "#c9a227"; }
+  else if (t.startsWith("cold")) { label = "Cold"; c = "#4a6fb5"; }
+  return `<span style="display:inline-block; padding:3px 11px; border-radius:999px; font-size:11.5px;
+    font-weight:700; background:${c}1a; color:${c};">${label}</span>`;
+}
+// A 0–10 score from real signals — stage progress, temperature, next step set.
+function leadScore(l) {
+  let score = 0;
+  const stageIdx = ["New Inquiry","Discovery & Qualification","Solution Presented",
+    "Decision in Progress","Strategic Nurturing","Reservation / Payment Processing",
+    "Successfully Booked"].indexOf(l.journey_stage);
+  if (stageIdx >= 0) score += (stageIdx / 6) * 5;
+  const t = (l.lead_temperature || "").toLowerCase();
+  if (t.startsWith("hot")) score += 3;
+  else if (t.startsWith("warm")) score += 2;
+  else if (t.startsWith("cold")) score += 1;
+  if (l.next_followup) score += 1;
+  if (l.closing_strategy) score += 1;
+  return Math.min(10, Math.round(score * 10) / 10).toFixed(1);
 }
 
 function renderLeadsTable() {
@@ -2676,12 +2714,15 @@ function renderLeadsTable() {
         <thead>
           <tr>
             ${sortHeader("Date of inquiry", "inquiry")}
-            ${sortHeader("Client's name", "name")}
-            ${sortHeader("Travel date", "travel")}
-            ${sortHeader("No. of persons", "pax", "center")}
-            ${sortHeader("Contact no.", "contact")}
-            ${sortHeader("Agent", "agent")}
-            <th style="padding:10px 12px; text-align:left; font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-soft); border-bottom:1px solid rgba(0,0,0,.08); white-space:nowrap;">Company profile</th>
+            ${sortHeader("Client", "name")}
+            ${sortHeader("Assigned to", "agent")}
+            <th style="padding:10px 12px; text-align:left; font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-soft); border-bottom:1px solid rgba(0,0,0,.08); white-space:nowrap;">Status</th>
+            ${sortHeader("No. of pax", "pax", "center")}
+            <th style="padding:10px 12px; text-align:left; font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-soft); border-bottom:1px solid rgba(0,0,0,.08); white-space:nowrap;">Package</th>
+            <th style="padding:10px 12px; text-align:center; font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-soft); border-bottom:1px solid rgba(0,0,0,.08); white-space:nowrap;">Lead score</th>
+            <th style="padding:10px 12px; text-align:left; font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-soft); border-bottom:1px solid rgba(0,0,0,.08); white-space:nowrap;">Last update</th>
+            <th style="padding:10px 12px; text-align:left; font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-soft); border-bottom:1px solid rgba(0,0,0,.08); white-space:nowrap;">Next action</th>
+            <th style="padding:10px 12px; text-align:left; font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-soft); border-bottom:1px solid rgba(0,0,0,.08); white-space:nowrap;"></th>
           </tr>
         </thead>
         <tbody>
@@ -2689,10 +2730,18 @@ function renderLeadsTable() {
             <tr>
               <td style="${td}">${fmtDate(l.inquiry_date || l.created_at)}</td>
               <td style="${td} font-weight:600; color:${isDuplicateLead(l) ? FLAG_RED : "var(--navy-900)"};">${l.client_full_name || "Unnamed client"}${isDuplicateLead(l) ? ' <span style="font-size:10.5px; font-weight:700;">⚠ dup</span>' : ""}</td>
-              <td style="${td}">${fmtDateFlagged(l.travel_date)}</td>
+              <td style="${td}">
+                <span style="display:inline-flex; align-items:center; gap:7px;">
+                  <span style="width:11px; height:11px; border-radius:3px; background:${agentDot(l.agent_id)}; flex-shrink:0;"></span>
+                  ${agentShort(l.agent_id)}
+                </span>
+              </td>
+              <td style="${td}">${statusPill(l)}</td>
               <td style="${td} text-align:center;">${Number(l.travelers) || 0}</td>
-              <td style="${td}">${l.client_mobile || "—"}</td>
-              <td style="${td}">${agentName(l.agent_id)}</td>
+              <td style="${td}">${l.package_destination || "—"}</td>
+              <td style="${td} text-align:center; font-weight:700; color:var(--navy-900);">${leadScore(l)}/10</td>
+              <td style="${td} max-width:180px;">${l.remarks || "—"}</td>
+              <td style="${td} max-width:220px;">${l.closing_strategy || "—"}</td>
               <td style="${td}">
                 <div style="display:flex; gap:6px;">
                   <button class="lead-open" data-lead="${l.id}" type="button"
