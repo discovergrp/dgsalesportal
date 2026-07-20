@@ -2829,19 +2829,28 @@ function agentShort(agentId) {
 }
 function statusPill(l) {
   const t = (l.lead_temperature || "").toLowerCase();
-  let label = "—", c = "#8a94a6";
+  let label = null, c = "#8a94a6";
   if (t.startsWith("hot")) { label = "Hot"; c = "#b42318"; }
   else if (t.startsWith("warm")) { label = "Warm"; c = "#c9a227"; }
   else if (t.startsWith("cold")) { label = "Cold"; c = "#4a6fb5"; }
+  // No temperature set yet (e.g. an untouched imported lead) → show a plain
+  // dash, not a fabricated status.
+  if (!label) return '<span style="color:var(--ink-faint);">—</span>';
   return `<span style="display:inline-block; padding:3px 11px; border-radius:999px; font-size:11.5px;
     font-weight:700; background:${c}1a; color:${c};">${label}</span>`;
 }
 // A 0–10 score. Uses the AI's read of the conversation when present; otherwise
 // computes from stage, temperature, and whether a next step is set.
+// A 0–10 score. Uses the AI's read when present. Otherwise, only computes a
+// score if the lead has actually been worked (has a temperature, follow-up, or
+// strategy). A brand-new untouched lead shows a dash, not a fake number.
 function leadScore(l) {
   if (l.ai_lead_score != null && !isNaN(Number(l.ai_lead_score))) {
     return Number(l.ai_lead_score).toFixed(1);
   }
+  const worked = l.lead_temperature || l.next_followup || l.closing_strategy
+    || (l.journey_stage && l.journey_stage !== "New Inquiry");
+  if (!worked) return "—";
   let score = 0;
   const stageIdx = ["New Inquiry","Discovery & Qualification","Solution Presented",
     "Decision in Progress","Strategic Nurturing","Reservation / Payment Processing",
