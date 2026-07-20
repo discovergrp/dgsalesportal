@@ -1660,8 +1660,9 @@ function editClientProfile(leadId) {
               style="width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:8px; font-size:13px; font-family:inherit; resize:vertical; line-height:1.5;">${(l.transcript_phone || "").replace(/</g, "&lt;")}</textarea>
           </div>
           <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-            <button type="button" id="e_suggest" style="padding:9px 16px; border:none; border-radius:8px; background:var(--gold-600); color:#fff; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit;">✨ Fill concern, strategy & follow-up</button>
+            <button type="button" id="e_suggest" style="padding:9px 16px; border:none; border-radius:8px; background:var(--gold-600); color:#fff; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit;">✨ Fill status, score, concern, strategy & follow-up</button>
             <span id="e_suggest_note" style="font-size:12px; color:var(--ink-faint);"></span>
+            <input type="hidden" id="e_ai_score" value="${l.ai_lead_score ?? ""}">
           </div>
         </div>`)}
 
@@ -1765,7 +1766,14 @@ function editClientProfile(leadId) {
         if (data.client_concern) document.getElementById("e_concern").value = data.client_concern;
         if (data.closing_strategy) document.getElementById("e_strategy").value = data.closing_strategy;
         if (data.next_followup) { const el = document.getElementById("e_followup"); if (el) el.value = data.next_followup + "T09:00"; }
-        note.textContent = "Suggested — review, then Save.";
+        // AI-set status (Hot/Warm/Cold) mapped to the dropdown's full label.
+        if (data.status) {
+          const el = document.getElementById("e_temperature");
+          const match = TEMP_OPTIONS.find(o => o.toLowerCase().startsWith(data.status.toLowerCase()));
+          if (el && match) el.value = match;
+        }
+        if (data.lead_score != null) { const el = document.getElementById("e_ai_score"); if (el) el.value = data.lead_score; }
+        note.textContent = "Suggested — status, score, concern, strategy & follow-up filled. Review, then Save.";
       }
     } catch (e) { note.textContent = "Couldn't reach the AI service."; }
     suggestBtn.disabled = false; suggestBtn.textContent = "✨ Fill concern, strategy & follow-up";
@@ -1941,6 +1949,7 @@ async function saveProfileEdits(leadId) {
     transcript_viber: (document.getElementById("e_tx_viber")?.value || "").trim() || null,
     transcript_phone: (document.getElementById("e_tx_phone")?.value || "").trim() || null,
     suggested_script: (document.getElementById("e_script")?.value || "").trim() || null,
+    ai_lead_score: (function () { const v = document.getElementById("e_ai_score")?.value; return v === "" || v == null ? null : Number(v); })(),
     transcript_updated_at: new Date().toISOString(),
     booking_reference: v("e_booking_ref"),
     payments,
@@ -2827,8 +2836,12 @@ function statusPill(l) {
   return `<span style="display:inline-block; padding:3px 11px; border-radius:999px; font-size:11.5px;
     font-weight:700; background:${c}1a; color:${c};">${label}</span>`;
 }
-// A 0–10 score from real signals — stage progress, temperature, next step set.
+// A 0–10 score. Uses the AI's read of the conversation when present; otherwise
+// computes from stage, temperature, and whether a next step is set.
 function leadScore(l) {
+  if (l.ai_lead_score != null && !isNaN(Number(l.ai_lead_score))) {
+    return Number(l.ai_lead_score).toFixed(1);
+  }
   let score = 0;
   const stageIdx = ["New Inquiry","Discovery & Qualification","Solution Presented",
     "Decision in Progress","Strategic Nurturing","Reservation / Payment Processing",
