@@ -2975,6 +2975,15 @@ function agentShort(agentId) {
   if (!full || full === "Unassigned") return "—";
   return full.split(" ")[0];
 }
+// True if the lead has any conversation transcript on record, across any of
+// the three channels (Messenger / Viber / Phone). Falls back to the old single
+// transcript field so older records still count.
+function hasTranscript(l) {
+  return !!((l.transcript_meta && l.transcript_meta.trim())
+    || (l.transcript_viber && l.transcript_viber.trim())
+    || (l.transcript_phone && l.transcript_phone.trim())
+    || (l.transcript && l.transcript.trim()));
+}
 function statusPill(l) {
   const t = (l.lead_temperature || "").toLowerCase();
   let label = null, c = "#8a94a6";
@@ -3088,7 +3097,7 @@ function renderLeadsTable() {
             <th style="padding:10px 12px; text-align:left; font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-soft); border-bottom:1px solid rgba(0,0,0,.08); white-space:nowrap;">Package</th>
             <th style="padding:10px 12px; text-align:center; font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-soft); border-bottom:1px solid rgba(0,0,0,.08); white-space:nowrap;">Lead score</th>
             <th style="padding:10px 12px; text-align:left; font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-soft); border-bottom:1px solid rgba(0,0,0,.08); white-space:nowrap;">Last update</th>
-            <th style="padding:10px 12px; text-align:left; font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-soft); border-bottom:1px solid rgba(0,0,0,.08); white-space:nowrap;">Next action</th>
+            <th style="padding:10px 12px; text-align:center; font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-soft); border-bottom:1px solid rgba(0,0,0,.08); white-space:nowrap;">Transcript</th>
             <th style="padding:10px 12px; text-align:left; font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-soft); border-bottom:1px solid rgba(0,0,0,.08); white-space:nowrap;"></th>
           </tr>
         </thead>
@@ -3108,11 +3117,14 @@ function renderLeadsTable() {
               <td style="${td}">${l.package_destination || "—"}</td>
               <td style="${td} text-align:center; font-weight:700; color:var(--navy-900);">${leadScore(l)}/10</td>
               <td style="${td} max-width:180px;">
+                <div style="font-size:12.5px; color:var(--navy-900); margin-bottom:2px;">${(l.updated_at || l.created_at) ? fmtDate(l.updated_at || l.created_at) : "—"}</div>
                 <span class="lead-lastupdate" data-lead="${l.id}" title="See the full conversation and details"
-                  style="cursor:pointer; color:var(--gold-600); font-weight:600;
+                  style="cursor:pointer; color:var(--gold-600); font-weight:600; font-size:12px;
                   text-decoration:underline; text-underline-offset:2px;">See details</span>
               </td>
-              <td style="${td} max-width:220px;">${l.closing_strategy || "—"}</td>
+              <td style="${td} text-align:center;">${hasTranscript(l)
+                ? '<span style="display:inline-block; padding:3px 12px; border-radius:999px; background:#eef7ee; color:#2e8b57; font-size:12px; font-weight:700;">Yes</span>'
+                : '<span style="display:inline-block; padding:3px 12px; border-radius:999px; background:#f0f0f0; color:var(--ink-faint); font-size:12px; font-weight:700;">No</span>'}</td>
               <td style="${td}">
                 <div style="display:flex; gap:6px;">
                   <button class="lead-open" data-lead="${l.id}" type="button"
