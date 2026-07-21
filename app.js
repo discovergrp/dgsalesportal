@@ -585,6 +585,12 @@ function renderAgentPerformance() {
   const isStale = (l) => l.next_followup && new Date(l.next_followup) < new Date() && leadIsActive(l);
   const bookedValue = (leads) => leads.filter(leadIsBooked).reduce((s, l) => s + (Number(l.deal_value) || 0), 0);
   const transcriptsBy = (id) => allLeads.filter(l => l.transcript_entered_by === id).length;
+  // A lead counts as transcribed if it has any transcript text, regardless of
+  // who entered it or when. This reflects the manual transcription work the
+  // team has actually done — unlike the transcript_entered_by stamp, which only
+  // records transcriptions made after that feature was deployed.
+  const leadHasTranscript = (l) => !!((l.transcript_meta || "").trim() || (l.transcript_viber || "").trim() || (l.transcript_phone || "").trim());
+  const totalTranscribed = allLeads.filter(leadHasTranscript).length;
 
   const agents = allProfilesCache.filter(p => p.role === "agent");
   const admins = allProfilesCache.filter(p => p.role === "sales_admin");
@@ -627,11 +633,14 @@ function renderAgentPerformance() {
     metric(agentLeads.filter(isStale).length, "stale", "#b42318"),
     "#4a6fb5");
 
-  // Niña = all admins rolled up (transcriptions)
-  const adminTranscripts = allLeads.filter(l => admins.some(a => a.id === l.transcript_entered_by)).length;
+  // Niña = all admins rolled up. The headline number is leads that actually
+  // have a transcript (real work done). The stamped count is shown alongside as
+  // the portion recorded in-portal since the encoder was enabled.
+  const adminStamped = allLeads.filter(l => admins.some(a => a.id === l.transcript_entered_by)).length;
   html += card("Niña — Sales Admins Team",
     metric(admins.length, "admins", "#6b5bc4") +
-    metric(adminTranscripts, "transcriptions encoded", "#6b5bc4"),
+    metric(totalTranscribed, "leads transcribed", "#2e8b57") +
+    metric(adminStamped, "encoded in-portal (tracked)", "#6b5bc4"),
     "#6b5bc4");
 
   // ===== SECTION 2: SALES AGENTS =====
@@ -656,12 +665,13 @@ function renderAgentPerformance() {
   });
 
   // ===== SECTION 3: SALES ADMINS =====
-  html += sectionTitle("Sales Admin Performance", "Transcriptions encoded — evaluated by Niña");
+  html += sectionTitle("Sales Admin Performance",
+    `Transcriptions encoded in-portal (tracked from when encoding was enabled) — evaluated by Niña. Team total transcribed: ${totalTranscribed} leads.`);
   const adminRows = admins.map(p => ({ p, n: transcriptsBy(p.id) })).sort((a, b) => b.n - a.n);
   if (!adminRows.length) html += `<div style="grid-column:1 / -1; color:var(--ink-faint); font-size:13px;">No sales admins.</div>`;
   adminRows.forEach(({ p, n }) => {
     html += card(p.full_name,
-      metric(n, "transcriptions encoded", "#6b5bc4"),
+      metric(n, "encoded in-portal (tracked)", "#6b5bc4"),
       "#6b5bc4");
   });
 
