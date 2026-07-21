@@ -2082,6 +2082,16 @@ async function saveProfileEdits(leadId) {
     updated_at: new Date().toISOString(),
   };
 
+  // Transcription encoder: record WHO first entered a transcript and WHEN,
+  // based on the logged-in user. Only stamps if a transcript is present now
+  // and no encoder was recorded before — so the original encoder is kept
+  // even if someone else edits the lead later.
+  const hasTx = !!(patch.transcript_meta || patch.transcript_viber || patch.transcript_phone);
+  if (hasTx && !lead.transcript_entered_by) {
+    patch.transcript_entered_by = currentProfile.id;
+    patch.transcript_entered_at = new Date().toISOString();
+  }
+
   // UPDATE, pinned to this one row. Never an insert — that would duplicate
   // the client instead of correcting them.
   const { error } = await supabaseClient.from("leads").update(patch).eq("id", leadId);
@@ -2098,6 +2108,40 @@ async function saveProfileEdits(leadId) {
   // which is what made saving an edit feel slow.
   const idx = allLeadsCache.findIndex(l => l.id === leadId);
   if (idx !== -1) allLeadsCache[idx] = { ...allLeadsCache[idx], ...patch };
+
+  // Activity log: record every meaningful change as its own reviewable row —
+  // who (logged-in user), which field, old value -> new value, when. Only the
+  // key fields are logged to keep the history readable. Fire-and-forget: a log
+  // failure must never block or undo the save the user just made.
+  try {
+    const LOGGED_FIELDS = {
+      client_full_name: "Client name", client_email: "Email", client_mobile: "Mobile",
+      package_destination: "Package", travel_date: "Travel date", journey_stage: "Stage",
+      lead_temperature: "Status", decision_status: "Decision", deal_value: "Deal value",
+      agent_id: "Assigned to", departure_id: "Departure", visa_status: "Visa status",
+      next_followup: "Next follow-up", booking_reference: "Booking ref",
+      concern: "Concern", closing_strategy: "Closing strategy", awaiting_reply: "Awaiting reply",
+      transcript_meta: "Messenger transcript", transcript_viber: "Viber transcript",
+      transcript_phone: "Phone transcript", suggested_script: "Suggested script",
+    };
+    const norm = (x) => (x === null || x === undefined) ? "" : String(x);
+    const shorten = (s) => { s = norm(s); return s.length > 300 ? s.slice(0, 300) + "…" : s; };
+    const logs = [];
+    for (const [key, label] of Object.entries(LOGGED_FIELDS)) {
+      if (!(key in patch)) continue;
+      if (norm(lead[key]) === norm(patch[key])) continue;   // unchanged
+      logs.push({
+        lead_id: leadId,
+        actor_id: currentProfile.id,
+        actor_name: currentProfile.full_name || "",
+        action: "edit",
+        field: label,
+        old_value: shorten(lead[key]),
+        new_value: shorten(patch[key]),
+      });
+    }
+    if (logs.length) supabaseClient.from("activity_log").insert(logs).then(() => {}, () => {});
+  } catch (_) { /* logging must never break saving */ }
   await loadDepartures();
   renderAll();
   openClientProfile(leadId);   // back to the read-only view, now updated
@@ -3150,7 +3194,7 @@ function renderLeadsTable() {
               </td>
               <td style="${td}">${statusPill(l)}</td>
               <td style="${td} text-align:center;">${Number(l.travelers) || 0}</td>
-              <td style="${td}">${l.package_destination || "—"}</td>
+              <td style="${td}">${(l.package_destination || "—").split("(")[0].trim() || "—"}</td>
               <td style="${td} text-align:center; font-weight:700; color:var(--navy-900);">${leadScore(l)}/10</td>
               <td style="${td} max-width:180px;">
                 <div style="font-size:12.5px; color:var(--navy-900); margin-bottom:2px;">${(l.updated_at || l.created_at) ? fmtDate(l.updated_at || l.created_at) : "—"}</div>
