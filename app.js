@@ -3185,11 +3185,29 @@ function renderLeadsTable() {
       <div style="display:flex; gap:6px; align-items:center;" id="leadPager">
         <button class="lead-page" data-page="${leadPage - 1}" ${leadPage === 1 ? "disabled" : ""} type="button"
           style="width:32px; height:32px; border:1px solid var(--line); border-radius:8px; background:#fff; cursor:${leadPage === 1 ? "not-allowed" : "pointer"}; opacity:${leadPage === 1 ? 0.4 : 1};">‹</button>
-        ${Array.from({ length: pages }, (_, i) => i + 1).map(n => `
-          <button class="lead-page" data-page="${n}" type="button"
-            style="min-width:32px; height:32px; border:1px solid ${n === leadPage ? "var(--navy-900)" : "var(--line)"};
-            border-radius:8px; background:${n === leadPage ? "var(--navy-900)" : "#fff"};
-            color:${n === leadPage ? "#fff" : "var(--ink-soft)"}; font-weight:600; font-size:13px; cursor:pointer; font-family:inherit;">${n}</button>`).join("")}
+        ${(() => {
+          // Compact pager: always show page 1 and the last page, plus a window
+          // of pages around the current one, with "…" gaps. Prevents dozens of
+          // buttons overflowing/overlapping when there are many pages.
+          const windowSize = 1; // pages on each side of the current page
+          const set = new Set([1, pages, leadPage]);
+          for (let i = 1; i <= windowSize; i++) { set.add(leadPage - i); set.add(leadPage + i); }
+          const list = [...set].filter(n => n >= 1 && n <= pages).sort((a, b) => a - b);
+          const out = [];
+          let prev = 0;
+          for (const n of list) {
+            if (n - prev > 1) out.push("gap");
+            out.push(n);
+            prev = n;
+          }
+          return out.map(n => n === "gap"
+            ? `<span style="min-width:20px; text-align:center; color:var(--ink-faint); font-size:13px;">…</span>`
+            : `<button class="lead-page" data-page="${n}" type="button"
+                style="min-width:32px; height:32px; border:1px solid ${n === leadPage ? "var(--navy-900)" : "var(--line)"};
+                border-radius:8px; background:${n === leadPage ? "var(--navy-900)" : "#fff"};
+                color:${n === leadPage ? "#fff" : "var(--ink-soft)"}; font-weight:600; font-size:13px; cursor:pointer; font-family:inherit;">${n}</button>`
+          ).join("");
+        })()}
         <button class="lead-page" data-page="${leadPage + 1}" ${leadPage === pages ? "disabled" : ""} type="button"
           style="width:32px; height:32px; border:1px solid var(--line); border-radius:8px; background:#fff; cursor:${leadPage === pages ? "not-allowed" : "pointer"}; opacity:${leadPage === pages ? 0.4 : 1};">›</button>
       </div>
