@@ -584,12 +584,12 @@ function renderAgentPerformance() {
   const byOwner = (id) => allLeads.filter(l => l.agent_id === id);
   const isStale = (l) => l.next_followup && new Date(l.next_followup) < new Date() && leadIsActive(l);
   const bookedValue = (leads) => leads.filter(leadIsBooked).reduce((s, l) => s + (Number(l.deal_value) || 0), 0);
-  const transcriptsBy = (id) => allLeads.filter(l => l.transcript_entered_by === id).length;
-  // A lead counts as transcribed if it has any transcript text, regardless of
-  // who entered it or when. This reflects the manual transcription work the
-  // team has actually done — unlike the transcript_entered_by stamp, which only
-  // records transcriptions made after that feature was deployed.
   const leadHasTranscript = (l) => !!((l.transcript_meta || "").trim() || (l.transcript_viber || "").trim() || (l.transcript_phone || "").trim());
+  // Per-admin transcription credit: count transcribed leads this person was the
+  // last to edit (updated_by). Admins encode the transcript, so they're the last
+  // editor — this captures far more than the transcript_entered_by stamp, which
+  // only began recording when that feature was enabled.
+  const transcriptsBy = (id) => allLeads.filter(l => leadHasTranscript(l) && l.updated_by === id).length;
   const totalTranscribed = allLeads.filter(leadHasTranscript).length;
 
   const agents = allProfilesCache.filter(p => p.role === "agent");
@@ -619,6 +619,18 @@ function renderAgentPerformance() {
 
   let html = "";
 
+  // ===== WHOLE-TEAM OVERVIEW (everyone: agents + admins + Leslie/all owners) =====
+  html += sectionTitle("Whole Team Overview", "Every consultant combined — agents, sales admins, and admins");
+  const teamBooked = allLeads.filter(leadIsBooked).length;
+  html += card("All Consultants — Combined",
+    metric(allLeads.length, "total leads", "#0f2748") +
+    metric(totalTranscribed, "leads transcribed", "#2e8b57") +
+    metric(teamBooked, "booked", "#2e8b57") +
+    metric(money(bookedValue(allLeads)), "booked value", "#2e8b57") +
+    metric(allLeads.filter(leadIsActive).length, "in pipeline", "#c9a227") +
+    metric(allLeads.filter(isStale).length, "stale", "#b42318"),
+    "#0f2748");
+
   // ===== SECTION 1: TEAM LEADS =====
   html += sectionTitle("Team Lead Performance", "Mex — Sales Agents team · Niña — Sales Admins team");
 
@@ -633,14 +645,14 @@ function renderAgentPerformance() {
     metric(agentLeads.filter(isStale).length, "stale", "#b42318"),
     "#4a6fb5");
 
-  // Niña = all admins rolled up. The headline number is leads that actually
-  // have a transcript (real work done). The stamped count is shown alongside as
-  // the portion recorded in-portal since the encoder was enabled.
-  const adminStamped = allLeads.filter(l => admins.some(a => a.id === l.transcript_entered_by)).length;
+  // Niña = all admins rolled up. Headline = leads with a transcript (real work).
+  // Second number = the sum credited to admins (by last editor), which should
+  // track closely to the headline.
+  const adminCredited = admins.reduce((s, a) => s + transcriptsBy(a.id), 0);
   html += card("Niña — Sales Admins Team",
     metric(admins.length, "admins", "#6b5bc4") +
     metric(totalTranscribed, "leads transcribed", "#2e8b57") +
-    metric(adminStamped, "encoded in-portal (tracked)", "#6b5bc4"),
+    metric(adminCredited, "credited to admins", "#6b5bc4"),
     "#6b5bc4");
 
   // ===== SECTION 2: SALES AGENTS =====
@@ -666,12 +678,12 @@ function renderAgentPerformance() {
 
   // ===== SECTION 3: SALES ADMINS =====
   html += sectionTitle("Sales Admin Performance",
-    `Transcriptions encoded in-portal (tracked from when encoding was enabled) — evaluated by Niña. Team total transcribed: ${totalTranscribed} leads.`);
+    `Transcriptions encoded (leads with a transcript, credited to the encoder) — evaluated by Niña. Team total: ${totalTranscribed} leads.`);
   const adminRows = admins.map(p => ({ p, n: transcriptsBy(p.id) })).sort((a, b) => b.n - a.n);
   if (!adminRows.length) html += `<div style="grid-column:1 / -1; color:var(--ink-faint); font-size:13px;">No sales admins.</div>`;
   adminRows.forEach(({ p, n }) => {
     html += card(p.full_name,
-      metric(n, "encoded in-portal (tracked)", "#6b5bc4"),
+      metric(n, "transcriptions encoded", "#6b5bc4"),
       "#6b5bc4");
   });
 
