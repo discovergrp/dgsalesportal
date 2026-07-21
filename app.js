@@ -488,16 +488,31 @@ async function loadLeads() {
   // table is well past that, so fetch in pages or the newest imports would
   // push real leads off the end and they'd silently vanish from every view.
   const PAGE = 1000;
+  const MAX_PAGES = 50;               // hard safety cap (50k leads) — prevents any infinite loop
   let all = [];
-  for (let from = 0; ; from += PAGE) {
+  let pageErrored = false;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const from = page * PAGE;
     const { data, error } = await supabaseClient
       .from("leads")
       .select("*")
       .order("created_at", { ascending: false })
       .range(from, from + PAGE - 1);
-    if (error) break;
+    if (error) {
+      // Do NOT silently keep a partial cache — that was the 974-undercount bug.
+      // Surface it, keep whatever we already have, and stop.
+      console.error(`loadLeads: page ${page} (rows ${from}-${from + PAGE - 1}) failed:`, error);
+      pageErrored = true;
+      break;
+    }
     all = all.concat(data || []);
-    if (!data || data.length < PAGE) break;   // last page reached
+    console.log(`loadLeads: page ${page} fetched ${data ? data.length : 0} rows, running total ${all.length}`);
+    if (!data || data.length < PAGE) break;   // short page => last page reached
+  }
+  if (pageErrored && all.length < 1) {
+    // total wipe-out on the very first page: keep the old cache rather than blanking every view
+    console.warn("loadLeads: first page errored, retaining previous cache");
+    return;
   }
   allLeadsCache = all;
   populateVoucherSelect(allLeadsCache);
