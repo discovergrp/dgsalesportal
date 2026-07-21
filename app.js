@@ -572,33 +572,100 @@ function renderRanking() {
     </div>`).join("");
 }
 
-// ---------- Agent Performance Overview ----------
+// ---------- Agent Performance Overview (three sections by role) ----------
 function renderAgentPerformance() {
   const grid = document.getElementById("agentPerfGrid");
   if (!grid) return;
 
-  const range = rangeFor(currentPeriod, dateInputs("view-team").from, dateInputs("view-team").to);
-  const scoped = allLeadsCache.filter(l => !isSlotsImport(l) && inRange(leadDate(l), range));
+  // Show ALL leads across ALL time here — this overview is about total
+  // contribution, so it deliberately ignores the date pills and does NOT
+  // exclude imported leads (unlike the funnel views).
+  const allLeads = allLeadsCache;
+  const byOwner = (id) => allLeads.filter(l => l.agent_id === id);
+  const isStale = (l) => l.next_followup && new Date(l.next_followup) < new Date() && leadIsActive(l);
+  const bookedValue = (leads) => leads.filter(leadIsBooked).reduce((s, l) => s + (Number(l.deal_value) || 0), 0);
+  const transcriptsBy = (id) => allLeads.filter(l => l.transcript_entered_by === id).length;
 
-  grid.innerHTML = allProfilesCache.map(p => {
-    const s = summarise(scoped.filter(l => l.agent_id === p.id));
-    const score = averageScore(p.id);
-    const commission = commissionOn(monthlyNetSales(p.id));
-    return `
-      <div class="agent-perf-card">
-        <div class="agent-perf-head">
-          <h4>${p.full_name}</h4>
-          <span>${s.active} active opportunit${s.active === 1 ? "y" : "ies"}</span>
-        </div>
-        <div class="agent-perf-metrics">
-          <div><div class="num">${s.leads}</div><div class="lbl">leads</div></div>
-          <div><div class="num">${s.pax}</div><div class="lbl">pax</div></div>
-          <div><div class="num">${shortCurrency(s.netSales)}</div><div class="lbl">NSC</div></div>
-          <div><div class="num">${score === null ? "—" : score}</div><div class="lbl">score</div></div>
-          <div style="grid-column: span 2;"><div class="num">${currency(commission)}</div><div class="lbl">commission this month</div></div>
-        </div>
-      </div>`;
-  }).join("");
+  const agents = allProfilesCache.filter(p => p.role === "agent");
+  const admins = allProfilesCache.filter(p => p.role === "sales_admin");
+
+  const money = (n) => "₱" + (Number(n) || 0).toLocaleString();
+
+  // ---- section + card builders (self-contained inline styles) ----
+  const sectionTitle = (title, sub) => `
+    <div style="grid-column:1 / -1; margin:26px 0 4px;">
+      <h3 style="margin:0; font-size:16px; color:var(--navy-900); letter-spacing:.02em;">${title}</h3>
+      <div style="font-size:12.5px; color:var(--ink-faint); margin-top:2px;">${sub}</div>
+      <div style="height:2px; background:linear-gradient(90deg,var(--gold-600),transparent); margin-top:8px;"></div>
+    </div>`;
+
+  const metric = (val, label, color) => `
+    <div style="flex:1; min-width:90px; background:#fff; border:1px solid var(--line); border-radius:10px; padding:9px 12px;">
+      <div style="font-size:18px; font-weight:800; color:${color || "var(--navy-900)"};">${val}</div>
+      <div style="font-size:10.5px; letter-spacing:.04em; text-transform:uppercase; color:var(--ink-faint); margin-top:1px;">${label}</div>
+    </div>`;
+
+  const card = (name, metricsHtml, accent) => `
+    <div style="grid-column:1 / -1; background:#f9fafc; border:1px solid var(--line); border-left:4px solid ${accent}; border-radius:12px; padding:16px 18px; margin-bottom:10px;">
+      <div style="font-size:15px; font-weight:700; color:var(--navy-900); margin-bottom:10px;">${name}</div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">${metricsHtml}</div>
+    </div>`;
+
+  let html = "";
+
+  // ===== SECTION 1: TEAM LEADS =====
+  html += sectionTitle("Team Lead Performance", "Mex — Sales Agents team · Niña — Sales Admins team");
+
+  // Mex = all agents rolled up
+  const agentLeads = allLeads.filter(l => agents.some(a => a.id === l.agent_id));
+  html += card("Mex — Sales Agents Team",
+    metric(agents.length, "agents", "#4a6fb5") +
+    metric(agentLeads.length, "total leads") +
+    metric(agentLeads.filter(leadIsBooked).length, "booked", "#2e8b57") +
+    metric(money(bookedValue(agentLeads)), "booked value", "#2e8b57") +
+    metric(agentLeads.filter(leadIsActive).length, "in pipeline", "#c9a227") +
+    metric(agentLeads.filter(isStale).length, "stale", "#b42318"),
+    "#4a6fb5");
+
+  // Niña = all admins rolled up (transcriptions)
+  const adminTranscripts = allLeads.filter(l => admins.some(a => a.id === l.transcript_entered_by)).length;
+  html += card("Niña — Sales Admins Team",
+    metric(admins.length, "admins", "#6b5bc4") +
+    metric(adminTranscripts, "transcriptions encoded", "#6b5bc4"),
+    "#6b5bc4");
+
+  // ===== SECTION 2: SALES AGENTS =====
+  html += sectionTitle("Sales Agent Performance", "Booking, value, pipeline and follow-up health — evaluated by Mex");
+  const agentRows = agents.map(p => {
+    const mine = byOwner(p.id);
+    const booked = mine.filter(leadIsBooked).length;
+    const conv = mine.length ? Math.round(1000 * booked / mine.length) / 10 : 0;
+    return { p, mine, booked, conv };
+  }).sort((a, b) => bookedValue(b.mine) - bookedValue(a.mine) || b.mine.length - a.mine.length);
+
+  if (!agentRows.length) html += `<div style="grid-column:1 / -1; color:var(--ink-faint); font-size:13px;">No sales agents.</div>`;
+  agentRows.forEach(({ p, mine, booked, conv }) => {
+    html += card(p.full_name,
+      metric(mine.length, "leads") +
+      metric(booked, "booked", "#2e8b57") +
+      metric(conv + "%", "conversion") +
+      metric(money(bookedValue(mine)), "booked value", "#2e8b57") +
+      metric(mine.filter(leadIsActive).length, "in pipeline", "#c9a227") +
+      metric(mine.filter(isStale).length, "stale", "#b42318"),
+      "#2e8b57");
+  });
+
+  // ===== SECTION 3: SALES ADMINS =====
+  html += sectionTitle("Sales Admin Performance", "Transcriptions encoded — evaluated by Niña");
+  const adminRows = admins.map(p => ({ p, n: transcriptsBy(p.id) })).sort((a, b) => b.n - a.n);
+  if (!adminRows.length) html += `<div style="grid-column:1 / -1; color:var(--ink-faint); font-size:13px;">No sales admins.</div>`;
+  adminRows.forEach(({ p, n }) => {
+    html += card(p.full_name,
+      metric(n, "transcriptions encoded", "#6b5bc4"),
+      "#6b5bc4");
+  });
+
+  grid.innerHTML = html;
 }
 
 // ---------- Funnels ----------
