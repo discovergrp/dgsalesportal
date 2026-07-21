@@ -2803,9 +2803,14 @@ function filteredLeads() {
   const range = rangeFor(currentLeadFilter, from, to);
   // Slots-sheet clients are historical closed sales that live in the Slots
   // Tracker. The Leads Tracker is for current inquiries the team is working,
-  // so those imports are kept out of it.
+  // so those imports are kept out of it. "Successfully Booked" leads are
+  // completed bookings that also belong to the Slots Tracker, so they're
+  // hidden here too — the rows still exist and still feed the Slots Tracker,
+  // they just don't clutter the working leads list.
   let leads = allLeadsCache.filter(l =>
-    !isSlotsImport(l) && inRange(leadDate(l), range));
+    !isSlotsImport(l)
+    && l.journey_stage !== BOOKED_STAGE
+    && inRange(leadDate(l), range));
 
   if (leadAgentFilter !== "all") {
     leads = leads.filter(l => l.agent_id === leadAgentFilter);
