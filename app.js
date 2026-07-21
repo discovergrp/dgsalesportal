@@ -1459,7 +1459,7 @@ const TEMP_OPTIONS = [
 const DECISION_OPTIONS = ["Ready to reserve", "Comparing options", "Awaiting approval", "On hold"];
 const VISA_OPTIONS = ["Not yet applied", "In progress", "Approved", "Not required"];
 const SOURCE_OPTIONS = ["Facebook", "Instagram", "Referral", "Walk-in", "Website"];
-const METHOD_OPTIONS = ["Bank transfer", "Credit card", "Cash", "GCash"];
+const METHOD_OPTIONS = ["Bank transfer", "Credit card", "Cash", "GCash", "Travel Fund"];
 
 function editField(label, id, value, type = "text") {
   return `
@@ -1516,10 +1516,13 @@ function editPaymentRows(payments) {
       ${editField("Date", `ep_date_${i}`, p.date, "date")}
       ${editField("Amount", `ep_amt_${i}`, Number(p.amount) || 0, "number")}
       ${editSelect("Method", `ep_method_${i}`, p.method || "", ["", ...METHOD_OPTIONS])}
-      <div style="padding-bottom:9px; font-size:11px;">
+      <div style="padding-bottom:6px;">
+        <label style="display:block; font-size:11px; letter-spacing:.03em; text-transform:uppercase; color:var(--ink-faint); margin-bottom:3px;">Proof of payment</label>
+        <input type="file" id="ep_receipt_${i}" class="ep-receipt" data-existing="${p.receipt_path || ""}"
+          accept="image/*,application/pdf" style="font-size:11px; max-width:150px;">
         ${p.receipt_path
-          ? `<a href="#" onclick="viewDocument('${p.receipt_path}'); return false;" style="color:var(--gold-600); font-weight:600;">Receipt</a>`
-          : '<span style="color:var(--ink-faint);">No receipt</span>'}
+          ? `<a href="#" onclick="viewDocument('${p.receipt_path}'); return false;" style="display:block; color:var(--gold-600); font-weight:600; font-size:11px; margin-top:2px;">View current</a>`
+          : '<span style="display:block; color:var(--ink-faint); font-size:11px; margin-top:2px;">No receipt yet</span>'}
       </div>
       <button type="button" class="ep-remove" data-row="${i}" title="Remove this payment"
         style="padding-bottom:9px; background:none; border:none; color:#b42318; font-size:18px; cursor:pointer;">&times;</button>
@@ -1533,18 +1536,28 @@ function editPaymentRows(payments) {
       Receipts stay attached to their row. Upload new receipt files from Client's Documents.</div>`;
 }
 
-// Read the payment rows currently on screen back into an array.
-function collectPaymentRows(existing) {
+// Read the payment rows currently on screen back into an array. If a new
+// receipt file was attached to a row, upload it and store its path; otherwise
+// keep whatever receipt the row already had.
+async function collectPaymentRows(existing) {
   const rows = [];
-  document.querySelectorAll("#epRows .ep-row").forEach(el => {
+  const els = [...document.querySelectorAll("#epRows .ep-row")];
+  for (const el of els) {
     const i = el.dataset.row;
     const date = document.getElementById(`ep_date_${i}`)?.value || null;
     const amount = Number(document.getElementById(`ep_amt_${i}`)?.value) || 0;
     const method = document.getElementById(`ep_method_${i}`)?.value || null;
-    // Keep the original receipt path for this row if there was one.
-    const receipt = (existing && existing[Number(i)] && existing[Number(i)].receipt_path) || null;
-    if (date || amount || method) rows.push({ date, amount, method, receipt_path: receipt });
-  });
+    // Start from the original receipt path for this row if there was one.
+    let receipt = (existing && existing[Number(i)] && existing[Number(i)].receipt_path) || null;
+    // If the user attached a new proof-of-payment file, upload it and use that.
+    const fileEl = document.getElementById(`ep_receipt_${i}`);
+    const file = fileEl?.files?.[0];
+    if (file) {
+      try { const up = await uploadDocument(file); if (up) receipt = up; }
+      catch (_) { /* if the upload fails, keep the existing receipt rather than losing the row */ }
+    }
+    if (date || amount || method || receipt) rows.push({ date, amount, method, receipt_path: receipt });
+  }
   return rows;
 }
 
@@ -1996,7 +2009,11 @@ function wirePaymentEditor(leadId) {
       ${editField("Date", `ep_date_${i}`, "", "date")}
       ${editField("Amount", `ep_amt_${i}`, 0, "number")}
       ${editSelect("Method", `ep_method_${i}`, "", ["", ...METHOD_OPTIONS])}
-      <div style="padding-bottom:9px; font-size:11px; color:var(--ink-faint);">New</div>
+      <div style="padding-bottom:6px;">
+        <label style="display:block; font-size:11px; letter-spacing:.03em; text-transform:uppercase; color:var(--ink-faint); margin-bottom:3px;">Proof of payment</label>
+        <input type="file" id="ep_receipt_${i}" class="ep-receipt" data-existing=""
+          accept="image/*,application/pdf" style="font-size:11px; max-width:150px;">
+      </div>
       <button type="button" class="ep-remove" style="padding-bottom:9px; background:none; border:none; color:#b42318; font-size:18px; cursor:pointer;">&times;</button>`;
     rowsBox.appendChild(div);
     bindRemovers();
@@ -2025,7 +2042,7 @@ async function saveProfileEdits(leadId) {
 
   // Rebuild payments from the rows on screen — including any the user added
   // or removed — carrying each receipt path across untouched.
-  const payments = collectPaymentRows(lead.payments || []);
+  const payments = await collectPaymentRows(lead.payments || []);
 
   const owner = document.getElementById("e_consultant")?.value || lead.agent_id;
 
@@ -2712,7 +2729,7 @@ let leadTempFilter = "all";   // all | hot | warm | cold | none
 let leadTranscriptFilter = "all";  // all | transcribed | untranscribed | unanswered
 let leadSort = { key: "inquiry", dir: "desc" };
 let leadPage = 1;
-const LEADS_PER_PAGE = 10;
+const LEADS_PER_PAGE = 25;
 
 function filteredLeads() {
   const { from, to } = dateInputs("view-leads");
@@ -3638,7 +3655,7 @@ function addPaymentRow(saved) {
   const row = document.createElement("div");
   row.className = "rank-row";
   row.style.alignItems = "flex-end";
-  const methods = ["Bank transfer", "Credit card", "Cash", "GCash"];
+  const methods = ["Bank transfer", "Credit card", "Cash", "GCash", "Travel Fund"];
   row.innerHTML = `
     <div class="rank-badge">${String(i).padStart(2, "0")}</div>
     <div class="form-field" style="flex:1;"><label>Payment date</label>
