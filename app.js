@@ -592,20 +592,40 @@ function renderAgentPerformance() {
   const grid = document.getElementById("agentPerfGrid");
   if (!grid) return;
 
-  // Show ALL leads across ALL time here — this overview is about total
-  // contribution, so it deliberately ignores the date pills and does NOT
-  // exclude imported leads (unlike the funnel views).
-  const allLeads = allLeadsCache;
+  // This overview respects the same date pills as the rest of the dashboard.
+  // Lead metrics are scoped by leadDate() (inquiry/created date); transcription
+  // metrics are scoped by transcript_entered_at (the true "when transcribed"
+  // stamp). Imports are still included here (unlike the funnel) so the totals
+  // reflect all-consultant contribution.
+  const range = rangeFor(currentPeriod, dateInputs("view-team").from, dateInputs("view-team").to);
+  const dateFiltered = !!(range.start || range.end);       // false only for "all"
+  const allLeads = allLeadsCache.filter(l => inRange(leadDate(l), range));
   const byOwner = (id) => allLeads.filter(l => l.agent_id === id);
   const isStale = (l) => l.next_followup && new Date(l.next_followup) < new Date() && leadIsActive(l);
   const bookedValue = (leads) => leads.filter(leadIsBooked).reduce((s, l) => s + (Number(l.deal_value) || 0), 0);
   const leadHasTranscript = (l) => !!((l.transcript_meta || "").trim() || (l.transcript_viber || "").trim() || (l.transcript_phone || "").trim());
-  // Per-admin transcription credit: count transcribed leads this person was the
-  // last to edit (updated_by). Admins encode the transcript, so they're the last
-  // editor — this captures far more than the transcript_entered_by stamp, which
-  // only began recording when that feature was enabled.
-  const transcriptsBy = (id) => allLeads.filter(l => leadHasTranscript(l) && l.updated_by === id).length;
-  const totalTranscribed = allLeads.filter(leadHasTranscript).length;
+
+  // Transcription metrics scope by WHEN the transcript was entered
+  // (transcript_entered_at), so "today"/"yesterday" reflect real transcribe
+  // activity. Credit still follows the encoder/last-editor (updated_by).
+  // NOTE: transcript_entered_at only began recording 2026-07-21, so ranges that
+  // reach before that date undercount — the UI flags this (see stampNote).
+  const TRANSCRIPT_STAMP_START = "2026-07-21";
+  const txInRange = (l) => {
+    if (!leadHasTranscript(l)) return false;
+    if (!dateFiltered) return true;                        // "all" => count every transcribed lead
+    if (!l.transcript_entered_at) return false;            // no stamp => can't place it in a date window
+    return inRange(new Date(l.transcript_entered_at), range);
+  };
+  const transcriptsBy = (id) => allLeadsCache.filter(l => txInRange(l) && l.updated_by === id).length;
+  const totalTranscribed = allLeadsCache.filter(txInRange).length;
+
+  // Show a caveat whenever the selected range starts before the stamp existed.
+  const rangeReachesBeforeStamp = dateFiltered &&
+    (!range.start || range.start < new Date(TRANSCRIPT_STAMP_START + "T00:00:00"));
+  const stampNote = rangeReachesBeforeStamp
+    ? `<div style="grid-column:1 / -1; font-size:11.5px; color:var(--ink-faint); margin:-2px 0 8px;">Transcription counts are date-accurate from Jul 21, 2026 onward — earlier transcriptions weren’t timestamped, so past-date totals are understated.</div>`
+    : "";
 
   const agents = allProfilesCache.filter(p => p.role === "agent");
   const admins = allProfilesCache.filter(p => p.role === "sales_admin");
@@ -637,14 +657,19 @@ function renderAgentPerformance() {
   // ===== WHOLE-TEAM OVERVIEW (everyone: agents + admins + Leslie/all owners) =====
   html += sectionTitle("Whole Team Overview", "Every consultant combined — agents, sales admins, and admins");
   const teamBooked = allLeads.filter(leadIsBooked).length;
+  const teamImports = allLeads.filter(isSlotsImport).length;
+  const teamReal = allLeads.length - teamImports;
   html += card("All Consultants — Combined",
     metric(allLeads.length, "total leads", "#0f2748") +
+    metric(teamReal, "excl. imports", "#0f2748") +
+    metric(teamImports, "of which imports", "#8a8f98") +
     metric(totalTranscribed, "leads transcribed", "#2e8b57") +
     metric(teamBooked, "booked", "#2e8b57") +
     metric(money(bookedValue(allLeads)), "booked value", "#2e8b57") +
     metric(allLeads.filter(leadIsActive).length, "in pipeline", "#c9a227") +
     metric(allLeads.filter(isStale).length, "stale", "#b42318"),
     "#0f2748");
+  html += stampNote;
 
   // ===== SECTION 1: TEAM LEADS =====
   html += sectionTitle("Team Lead Performance", "Mex — Sales Agents team · Niña — Sales Admins team");
@@ -694,6 +719,7 @@ function renderAgentPerformance() {
   // ===== SECTION 3: SALES ADMINS =====
   html += sectionTitle("Sales Admin Performance",
     `Transcriptions encoded (leads with a transcript, credited to the encoder) — evaluated by Niña. Team total: ${totalTranscribed} leads.`);
+  html += stampNote;
   const adminRows = admins.map(p => ({ p, n: transcriptsBy(p.id) })).sort((a, b) => b.n - a.n);
   if (!adminRows.length) html += `<div style="grid-column:1 / -1; color:var(--ink-faint); font-size:13px;">No sales admins.</div>`;
   adminRows.forEach(({ p, n }) => {
