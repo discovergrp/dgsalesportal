@@ -2930,9 +2930,14 @@ function openDeparture(depId) {
 
       ${d.notes ? `<div style="margin-top:14px; font-size:12.5px; color:var(--ink-soft);"><strong>Notes:</strong> ${d.notes}</div>` : ""}
 
-      <h3 style="margin:22px 0 10px; font-size:15px; color:var(--navy-900);">Clients on this departure (${rows.length})</h3>
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin:22px 0 10px; flex-wrap:wrap;">
+        <h3 style="margin:0; font-size:15px; color:var(--navy-900);">Clients on this departure (${rows.length})</h3>
+        ${canManageDepartures() ? `
+          <button type="button" id="depAddTravTop" style="padding:9px 16px; border:none; border-radius:8px;
+            background:var(--navy-900); color:#fff; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit;">+ Add a traveler</button>` : ""}
+      </div>
       ${rows.length === 0 ? `
-        <div class="registry-empty">Nobody is on this departure yet. Open a client, choose Edit profile, and pick this departure.</div>` : `
+        <div class="registry-empty">Nobody is on this departure yet. Use <strong>+ Add a traveler</strong> for a new sale, or open an existing client and pick this departure from Edit profile.</div>` : `
         <div style="overflow-x:auto;">
           <table style="width:100%; border-collapse:collapse; min-width:760px;">
             <thead><tr>
@@ -2955,7 +2960,7 @@ function openDeparture(depId) {
                     <td style="${td} text-align:right;">${currency(val)}</td>
                     <td style="${td} text-align:right;">${currency(paid)}</td>
                     <td style="${td} text-align:right; font-weight:600;">${currency(Math.max(val - paid, 0))}</td>
-                    <td style="${td}"><button class="dep-client" data-lead="${l.id}" type="button"
+                    <td style="${td} white-space:nowrap;"><button class="dep-client" data-lead="${l.id}" type="button"
                       style="padding:5px 11px; border:1px solid var(--line); border-radius:6px; background:#fff;
                       font-size:12px; font-weight:600; color:var(--navy-900); cursor:pointer; font-family:inherit;">${canEditLead(l) ? "Edit" : "Open"}</button>${canRemoveParticipants() ? `
                       <button class="dep-remove" data-lead="${l.id}" data-name="${(l.client_full_name || "Unnamed").replace(/"/g, "&quot;")}" data-pax="${Number(l.travelers) || 0}" type="button"
@@ -2986,6 +2991,8 @@ function openDeparture(depId) {
   if (de) de.onclick = () => { close(); departureForm(d); };
   const at = document.getElementById("depAddTrav");
   if (at) at.onclick = () => addTravelerForm(d);
+  const atTop = document.getElementById("depAddTravTop");
+  if (atTop) atTop.onclick = () => addTravelerForm(d);
   ov.querySelectorAll(".dep-remove").forEach(b => b.addEventListener("click", async () => {
     const leadId = b.dataset.lead;
     const name = b.dataset.name;
