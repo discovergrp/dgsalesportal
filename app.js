@@ -2308,13 +2308,11 @@ let openDepartureId = null;
 // isn't a seat — counting it would show trips as full that have sold nothing.
 const SEAT_TAKING_STAGES = ["Reservation / Payment Processing", "Successfully Booked"];
 
-// Niña Roxas can pull a client off a departure to free the seat. Granted to her
-// profile specifically (not the admin role) so nobody else gains the power by
-// being made an admin. If this needs to move to someone else, change the id —
-// or better, promote it to a can_remove_participants flag on profiles.
-const PARTICIPANT_REMOVER_IDS = ["dcf84561-af25-4c26-84f0-f8554682ce6f"];
+// Removing a client from a departure destroys booked inventory, so it stays
+// off-limits to plain agents — sales admins and admins only, the same bar as
+// managing departures. Every removal is written to activity_log.
 function canRemoveParticipants() {
-  return !!currentProfile && PARTICIPANT_REMOVER_IDS.includes(currentProfile.id);
+  return canManageDepartures();
 }
 
 async function loadDepartures() {
@@ -2726,6 +2724,161 @@ async function saveDeparture(depId, ov) {
 }
 
 // ---------- One departure's clients ----------
+// ---------- Adding a brand-new sale straight onto a departure ----------
+// For a client who has just availed a package and isn't in the tracker yet.
+// Creates the lead AND seats it in one step. Existing clients should be seated
+// via Client Profile -> Edit profile instead, so we block on a name match.
+function addTravelerForm(dep) {
+  if (!canManageDepartures()) return;
+  const s = departureStats(dep);
+
+  let ov = document.getElementById("addTravOverlay");
+  if (!ov) {
+    ov = document.createElement("div");
+    ov.id = "addTravOverlay";
+    ov.style.cssText = `position:fixed; inset:0; background:rgba(8,18,38,.55); z-index:10001;
+      display:flex; align-items:flex-start; justify-content:center; overflow-y:auto; padding:40px 20px;`;
+    document.body.appendChild(ov);
+    ov.addEventListener("click", (e) => { if (e.target === ov) ov.style.display = "none"; });
+  }
+
+  const agents = allProfilesCache
+    .filter(p => p.role === "agent" || p.role === "sales_admin" || p.role === "admin")
+    .sort((a, b) => (a.full_name || "").localeCompare(b.full_name || ""));
+
+  const fld = `width:100%; padding:10px 12px; border:1.5px solid var(--line); border-radius:9px;
+    font-family:inherit; font-size:14px; color:var(--ink); background:#fff;`;
+  const lbl = `display:block; font-size:12.5px; font-weight:700; color:var(--ink); margin-bottom:5px;`;
+
+  ov.innerHTML = `
+    <div style="background:#fff; border-radius:16px; max-width:720px; width:100%; padding:26px 28px 30px;
+      box-shadow:0 24px 60px rgba(0,0,0,.3);">
+      <div style="font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--gold-600); font-weight:700;">New sale</div>
+      <h2 style="margin:4px 0 4px; font-size:21px; color:var(--navy-900);">Add a traveler</h2>
+      <p style="margin:0 0 4px; font-size:13.5px; color:var(--ink-soft);">
+        ${dep.route} · ${departureDates(dep)}</p>
+      <p style="margin:0 0 18px; font-size:12.5px; color:${s.available <= 0 ? FLAG_RED : "var(--ink-faint)"};">
+        ${s.occupied} of ${dep.capacity} seats taken · ${s.available >= 0 ? `${s.available} available` : `overbooked by ${Math.abs(s.available)}`}</p>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px;">
+        <div style="grid-column:1 / -1;">
+          <label style="${lbl}">Client full name *</label>
+          <input id="at_name" style="${fld}" placeholder="As it appears on the passport">
+        </div>
+        <div><label style="${lbl}">Email</label><input id="at_email" type="email" style="${fld}"></div>
+        <div><label style="${lbl}">Mobile</label><input id="at_mobile" style="${fld}" placeholder="639XXXXXXXXX"></div>
+        <div><label style="${lbl}">Number of travelers (pax) *</label><input id="at_pax" type="number" min="1" value="1" style="${fld}"></div>
+        <div><label style="${lbl}">Deal value (₱)</label><input id="at_value" type="number" min="0" step="1000" style="${fld}"></div>
+        <div>
+          <label style="${lbl}">Consultant credited *</label>
+          <select id="at_agent" style="${fld}">
+            <option value="">— select —</option>
+            ${agents.map(p => `<option value="${p.id}">${p.full_name}${p.role !== "agent" ? ` (${p.role})` : ""}</option>`).join("")}
+          </select>
+        </div>
+        <div>
+          <label style="${lbl}">Stage *</label>
+          <select id="at_stage" style="${fld}">
+            ${SEAT_TAKING_STAGES.map(st => `<option value="${st}">${st}</option>`).join("")}
+          </select>
+        </div>
+        <div><label style="${lbl}">Package</label><input id="at_pkg" style="${fld}" value="${(dep.route || "").replace(/"/g, "&quot;")}"></div>
+        <div><label style="${lbl}">Booking reference</label><input id="at_ref" style="${fld}"></div>
+        <div style="grid-column:1 / -1;">
+          <label style="${lbl}">Notes</label>
+          <textarea id="at_notes" style="${fld} min-height:64px; resize:vertical;"></textarea>
+        </div>
+      </div>
+
+      <div id="at_err" style="display:none; margin-top:14px; padding:11px 13px; border-radius:9px;
+        background:#fdecea; color:${FLAG_RED}; font-size:13px; font-weight:600;"></div>
+
+      <div style="display:flex; gap:10px; margin-top:20px; padding-top:16px; border-top:1px solid var(--line);">
+        <button type="button" id="at_save" style="padding:10px 18px; border:none; border-radius:8px;
+          background:var(--gold-600); color:#fff; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit;">Add traveler</button>
+        <button type="button" id="at_cancel" style="padding:10px 18px; border:1px solid var(--line); border-radius:8px;
+          background:#fff; font-size:13px; font-weight:700; color:var(--navy-900); cursor:pointer; font-family:inherit;">Cancel</button>
+      </div>
+    </div>`;
+
+  ov.style.display = "flex";
+  const close = () => { ov.style.display = "none"; };
+  document.getElementById("at_cancel").onclick = close;
+
+  document.getElementById("at_save").onclick = async () => {
+    const btn = document.getElementById("at_save");
+    const err = document.getElementById("at_err");
+    const v = id => (document.getElementById(id)?.value || "").trim();
+    err.style.display = "none";
+
+    const name = v("at_name");
+    const pax = Number(v("at_pax")) || 0;
+    const agent = v("at_agent");
+    if (!name || pax < 1 || !agent) {
+      err.textContent = "Client name, at least 1 pax, and a credited consultant are required.";
+      err.style.display = "block"; return;
+    }
+
+    // Block on an existing client so a new sale can't silently duplicate
+    // someone already in the tracker. Confirming treats them as a namesake.
+    const nm = name.toLowerCase();
+    const em = v("at_email").toLowerCase();
+    const clash = allLeadsCache.find(l =>
+      (l.client_full_name || "").trim().toLowerCase() === nm ||
+      (em && (l.client_email || "").trim().toLowerCase() === em));
+    if (clash) {
+      const where = clash.departure_id
+        ? `already on a departure` : `already in the tracker (not yet on a departure)`;
+      const ok = confirm(`"${clash.client_full_name}" is ${where}.\n\nIf this is the SAME person, cancel and seat them from Client Profile instead — adding here creates a duplicate.\n\nIs this a DIFFERENT person with the same name?`);
+      if (!ok) return;
+    }
+
+    btn.disabled = true; btn.textContent = "Adding…";
+
+    const row = {
+      client_full_name: name,
+      client_email: v("at_email") || null,
+      client_mobile: v("at_mobile") || null,
+      package_destination: v("at_pkg") || dep.route,
+      journey_stage: v("at_stage"),
+      travelers: pax,
+      deal_value: Number(v("at_value")) || null,
+      booking_reference: v("at_ref") || null,
+      agent_id: agent,
+      departure_id: dep.id,
+      lead_source: "Added at departure",
+      created_by: currentProfile.id,
+      updated_by: currentProfile.id,
+    };
+
+    const { data, error } = await supabaseClient.from("leads").insert(row).select().single();
+    if (error) {
+      err.textContent = "Couldn't add — " + error.message;
+      err.style.display = "block";
+      btn.disabled = false; btn.textContent = "Add traveler";
+      return;
+    }
+
+    if (data && v("at_notes")) {
+      supabaseClient.from("client_notes").insert({
+        lead_id: data.id, note: v("at_notes"), created_by: currentProfile.id,
+      }).then(() => {}, () => {});
+    }
+    if (data) {
+      supabaseClient.from("activity_log").insert({
+        lead_id: data.id, actor_id: currentProfile.id, actor_name: currentProfile.full_name,
+        action: "Added to departure as new sale", field: "departure_id",
+        old_value: null, new_value: `${dep.route} — ${departureDates(dep)}`,
+      }).then(() => {}, () => {});
+    }
+
+    close();
+    await loadLeads();
+    renderSlots();
+    openDeparture(dep.id);
+  };
+}
+
 function openDeparture(depId) {
   const d = allDeparturesCache.find(x => x.id === depId);
   if (!d) return;
@@ -2816,6 +2969,8 @@ function openDeparture(depId) {
 
       <div style="display:flex; gap:10px; margin-top:22px; padding-top:16px; border-top:1px solid var(--line);">
         ${canManageDepartures() ? `
+          <button type="button" id="depAddTrav" style="padding:10px 18px; border:none; border-radius:8px;
+            background:var(--navy-900); color:#fff; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit;">+ Add a traveler</button>
           <button type="button" id="depEdit" style="padding:10px 18px; border:none; border-radius:8px;
             background:var(--gold-600); color:#fff; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit;">Edit departure</button>` : ""}
         <button type="button" id="depDrawerClose" style="padding:10px 18px; border:1px solid var(--line); border-radius:8px;
@@ -2829,6 +2984,8 @@ function openDeparture(depId) {
   document.getElementById("depDrawerClose").onclick = close;
   const de = document.getElementById("depEdit");
   if (de) de.onclick = () => { close(); departureForm(d); };
+  const at = document.getElementById("depAddTrav");
+  if (at) at.onclick = () => addTravelerForm(d);
   ov.querySelectorAll(".dep-remove").forEach(b => b.addEventListener("click", async () => {
     const leadId = b.dataset.lead;
     const name = b.dataset.name;
