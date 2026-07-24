@@ -2732,15 +2732,17 @@ function addTravelerForm(dep) {
   if (!canManageDepartures()) return;
   const s = departureStats(dep);
 
-  let ov = document.getElementById("addTravOverlay");
-  if (!ov) {
-    ov = document.createElement("div");
-    ov.id = "addTravOverlay";
-    ov.style.cssText = `position:fixed; inset:0; background:rgba(8,18,38,.55); z-index:10001;
-      display:flex; align-items:flex-start; justify-content:center; overflow-y:auto; padding:40px 20px;`;
-    document.body.appendChild(ov);
-    ov.addEventListener("click", (e) => { if (e.target === ov) ov.style.display = "none"; });
-  }
+  // Rebuild the overlay from scratch every time. Reusing the node kept the old
+  // click handlers alive, so reopening the drawer stacked listeners and one
+  // click fired the insert several times over — the triple-add bug.
+  const old = document.getElementById("addTravOverlay");
+  if (old) old.remove();
+  const ov = document.createElement("div");
+  ov.id = "addTravOverlay";
+  ov.style.cssText = `position:fixed; inset:0; background:rgba(8,18,38,.55); z-index:10001;
+    display:flex; align-items:flex-start; justify-content:center; overflow-y:auto; padding:40px 20px;`;
+  document.body.appendChild(ov);
+  ov.addEventListener("click", (e) => { if (e.target === ov) ov.remove(); });
 
   const agents = allProfilesCache
     .filter(p => p.role === "agent" || p.role === "sales_admin" || p.role === "admin")
@@ -2802,10 +2804,12 @@ function addTravelerForm(dep) {
     </div>`;
 
   ov.style.display = "flex";
-  const close = () => { ov.style.display = "none"; };
+  const close = () => ov.remove();
   document.getElementById("at_cancel").onclick = close;
 
+  let saving = false;          // belt and braces: one insert per form, ever
   document.getElementById("at_save").onclick = async () => {
+    if (saving) return;
     const btn = document.getElementById("at_save");
     const err = document.getElementById("at_err");
     const v = id => (document.getElementById(id)?.value || "").trim();
@@ -2819,18 +2823,19 @@ function addTravelerForm(dep) {
       err.style.display = "block"; return;
     }
 
-    // Block on an existing client so a new sale can't silently duplicate
-    // someone already in the tracker. Confirming treats them as a namesake.
+    saving = true;
+    // Only warn about a genuine clash: the same person already ON THIS
+    // departure, or an exact email match anywhere. Matching bare names across
+    // all 2,000+ leads flagged every common name and was worse than useless.
     const nm = name.toLowerCase();
     const em = v("at_email").toLowerCase();
     const clash = allLeadsCache.find(l =>
-      (l.client_full_name || "").trim().toLowerCase() === nm ||
+      (l.departure_id === dep.id && (l.client_full_name || "").trim().toLowerCase() === nm) ||
       (em && (l.client_email || "").trim().toLowerCase() === em));
     if (clash) {
-      const where = clash.departure_id
-        ? `already on a departure` : `already in the tracker (not yet on a departure)`;
-      const ok = confirm(`"${clash.client_full_name}" is ${where}.\n\nIf this is the SAME person, cancel and seat them from Client Profile instead — adding here creates a duplicate.\n\nIs this a DIFFERENT person with the same name?`);
-      if (!ok) return;
+      const here = clash.departure_id === dep.id;
+      const ok = confirm(`"${clash.client_full_name}" is already ${here ? "on this departure" : "in the tracker with that email"}.\n\nAdd anyway as a separate booking?`);
+      if (!ok) { saving = false; return; }
     }
 
     btn.disabled = true; btn.textContent = "Adding…";
@@ -2855,6 +2860,7 @@ function addTravelerForm(dep) {
     if (error) {
       err.textContent = "Couldn't add — " + error.message;
       err.style.display = "block";
+      saving = false;
       btn.disabled = false; btn.textContent = "Add traveler";
       return;
     }
