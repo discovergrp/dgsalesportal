@@ -2308,6 +2308,15 @@ let openDepartureId = null;
 // isn't a seat — counting it would show trips as full that have sold nothing.
 const SEAT_TAKING_STAGES = ["Reservation / Payment Processing", "Successfully Booked"];
 
+// Niña Roxas can pull a client off a departure to free the seat. Granted to her
+// profile specifically (not the admin role) so nobody else gains the power by
+// being made an admin. If this needs to move to someone else, change the id —
+// or better, promote it to a can_remove_participants flag on profiles.
+const PARTICIPANT_REMOVER_IDS = ["dcf84561-af25-4c26-84f0-f8554682ce6f"];
+function canRemoveParticipants() {
+  return !!currentProfile && PARTICIPANT_REMOVER_IDS.includes(currentProfile.id);
+}
+
 async function loadDepartures() {
   const { data, error } = await supabaseClient
     .from("departures")
@@ -2795,7 +2804,10 @@ function openDeparture(depId) {
                     <td style="${td} text-align:right; font-weight:600;">${currency(Math.max(val - paid, 0))}</td>
                     <td style="${td}"><button class="dep-client" data-lead="${l.id}" type="button"
                       style="padding:5px 11px; border:1px solid var(--line); border-radius:6px; background:#fff;
-                      font-size:12px; font-weight:600; color:var(--navy-900); cursor:pointer; font-family:inherit;">${canEditLead(l) ? "Edit" : "Open"}</button></td>
+                      font-size:12px; font-weight:600; color:var(--navy-900); cursor:pointer; font-family:inherit;">${canEditLead(l) ? "Edit" : "Open"}</button>${canRemoveParticipants() ? `
+                      <button class="dep-remove" data-lead="${l.id}" data-name="${(l.client_full_name || "Unnamed").replace(/"/g, "&quot;")}" data-pax="${Number(l.travelers) || 0}" type="button"
+                      style="margin-left:6px; padding:5px 11px; border:1px solid #f0c9c5; border-radius:6px; background:#fff;
+                      font-size:12px; font-weight:600; color:${FLAG_RED}; cursor:pointer; font-family:inherit;">Remove</button>` : ""}</td>
                   </tr>`;
               }).join("")}
             </tbody>
@@ -2817,6 +2829,41 @@ function openDeparture(depId) {
   document.getElementById("depDrawerClose").onclick = close;
   const de = document.getElementById("depEdit");
   if (de) de.onclick = () => { close(); departureForm(d); };
+  ov.querySelectorAll(".dep-remove").forEach(b => b.addEventListener("click", async () => {
+    const leadId = b.dataset.lead;
+    const name = b.dataset.name;
+    const pax = Number(b.dataset.pax) || 0;
+    const lead = allLeadsCache.find(l => l.id === leadId);
+    if (!lead) return;
+
+    const seatWord = pax === 1 ? "seat" : "seats";
+    if (!confirm(`Remove ${name} from ${d.route}?\n\nThis frees ${pax} ${seatWord}. The client record stays in the tracker — only the departure is cleared.`)) return;
+
+    b.disabled = true; b.textContent = "Removing…";
+
+    const { error } = await supabaseClient
+      .from("leads").update({ departure_id: null, updated_by: currentProfile.id }).eq("id", leadId);
+
+    if (error) {
+      b.disabled = false; b.textContent = "Failed — retry";
+      console.error("remove participant failed:", error);
+      return;
+    }
+
+    // Destructive action on booked inventory — leave a trail.
+    supabaseClient.from("activity_log").insert({
+      lead_id: leadId, actor_id: currentProfile.id, actor_name: currentProfile.full_name,
+      action: "Removed from departure", field: "departure_id",
+      old_value: `${d.route} — ${departureDates(d)}`, new_value: null,
+    }).then(() => {}, () => {});
+
+    // Occupancy is derived from the leads cache, so refreshing it recalculates
+    // occupied / available / revenue and the status badge everywhere.
+    await loadLeads();
+    renderSlots();
+    openDeparture(depId);   // reopen with the updated numbers
+  }));
+
   ov.querySelectorAll(".dep-client").forEach(b => b.addEventListener("click", () => {
     const leadId = b.dataset.lead;
     const lead = allLeadsCache.find(l => l.id === leadId);
